@@ -1,0 +1,199 @@
+name: PR validation
+
+# Every check that can fail without touching Snowflake runs first and in
+# parallel. The speculative plan runs last, because it is the only job that
+# needs credentials and the only one that costs anything.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.9.8"
+
+jobs:
+  static:
+    name: Format, lint and scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform validate (modules)
+        run: |
+          for module in modules/*/; do
+            echo "::group::validate ${module}"
+            terraform -chdir="${module}" init -backend=false -input=false
+            terraform -chdir="${module}" validate
+            echo "::endgroup::"
+          done
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: tflint
+        run: |
+          tflint --init
+          tflint --recursive --minimum-failure-severity=warning
+
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          quiet: true
+          soft_fail: false
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  version-bump:
+    name: Module version bumped
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The modules are published artifacts. Changing one without bumping the
+      # version would silently republish a different thing under the same
+      # number, which breaks the promise that a pinned version is immutable.
+      - name: Require a VERSION bump when modules change
+        run: |
+          base="origin/${{ github.base_ref }}"
+          git fetch --quiet origin "${{ github.base_ref }}"
+
+          if ! git diff --quiet "$base" HEAD -- modules/; then
+            if git diff --quiet "$base" HEAD -- VERSION; then
+              echo "::error file=VERSION::modules/ changed but VERSION did not."
+              echo "Bump VERSION so the published module set gets a new, immutable version."
+              exit 1
+            fi
+
+            old=$(git show "$base:VERSION" | tr -d '[:space:]')
+            new=$(tr -d '[:space:]' < VERSION)
+            echo "VERSION ${old} -> ${new}"
+
+            # Sort -V puts the lower version first; if the new one is not
+            # strictly greater, the pin would move backwards.
+            if [ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | head -1)" != "$old" ] || [ "$old" = "$new" ]; then
+              echo "::error file=VERSION::VERSION must increase (${old} -> ${new})."
+              exit 1
+            fi
+          else
+            echo "No module changes; VERSION bump not required."
+          fi
+
+  plan:
+    name: Plan against development
+    runs-on: ubuntu-latest
+    needs: [static, version-bump]
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+          terraform_wrapper: false
+
+      # A speculative run: HCP plans against the development workspace's real
+      # state but cannot apply. Snowflake credentials stay in HCP - this runner
+      # never holds them.
+      - name: terraform init
+        working-directory: envs/dev
+        env:
+          TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
+        run: terraform init -input=false
+
+      - name: terraform plan
+        id: plan
+        working-directory: envs/dev
+        env:
+          TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
+        run: |
+          set +e
+          terraform plan -input=false -no-color > plan.txt 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat plan.txt
+
+      - name: Comment plan on the pull request
+        uses: actions/github-script@v7
+        env:
+          PLAN_EXIT: ${{ steps.plan.outputs.exit_code }}
+        with:
+          script: |
+            const fs = require('fs');
+            const raw = fs.readFileSync('envs/dev/plan.txt', 'utf8');
+            const failed = process.env.PLAN_EXIT !== '0';
+
+            // GitHub rejects comments over 65536 characters.
+            const limit = 60000;
+            const plan = raw.length > limit
+              ? raw.slice(0, limit) + '\n\n... truncated. See the full plan in the workflow log.'
+              : raw;
+
+            const body = [
+              `### Terraform plan — development ${failed ? '❌ failed' : '✅'}`,
+              '',
+              'Speculative plan against the `snowflake-poc-dev` workspace. Applying happens on merge, not here.',
+              '',
+              '<details><summary>Plan output</summary>',
+              '',
+              '```terraform',
+              plan,
+              '```',
+              '',
+              '</details>',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('### Terraform plan — development'));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail if the plan failed
+        if: steps.plan.outputs.exit_code != '0'
+        run: exit 1

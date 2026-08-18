@@ -1,0 +1,18 @@
+# Never commit private keys. The bootstrap script writes here.
+bootstrap/keys/
+*.p8
+*.pem
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!example.tfvars
+.terraformrc
+terraform.rc
+
+# OS
+.DS_Store

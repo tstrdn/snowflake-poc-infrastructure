@@ -1,0 +1,97 @@
+name: Release modules
+
+# Publishes the Terraform module set to Artifactory as an immutable version,
+# then hands off to deploy-dev. Nothing is deployed here - this step only
+# produces the artifact that every environment will later consume.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "VERSION"
+      - ".github/workflows/release.yml"
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish to Artifactory
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      released: ${{ steps.version.outputs.released }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+          # The tag is the idempotency guard. A re-run of this workflow, or a
+          # merge that did not change VERSION, must not republish a different
+          # tree under an existing version.
+          if git rev-parse "v${version}" >/dev/null 2>&1; then
+            echo "Tag v${version} already exists; nothing to publish."
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: jfrog/setup-jfrog-cli@v4
+        if: steps.version.outputs.released == 'true'
+        env:
+          JF_URL: ${{ secrets.JF_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+
+      - name: Publish modules
+        if: steps.version.outputs.released == 'true'
+        env:
+          JF_URL: ${{ secrets.JF_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          jf tfc --repo-deploy snowflake-poc-tf-modules
+
+          # jf tf publishes the module in the working directory. Both modules
+          # share one version: they are designed, reviewed and promoted as a
+          # set, and a split version scheme would let an environment run a
+          # combination that was never tested together.
+          for module in modules/*/; do
+            name=$(basename "$module")
+            echo "::group::publish ${name} v${VERSION}"
+            ( cd "$module" && jf tf p \
+                --namespace=snowflakepoc \
+                --provider=snowflake \
+                --tag="v${VERSION}" )
+            echo "::endgroup::"
+          done
+
+      - name: Tag the release
+        if: steps.version.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Module set v${VERSION}"
+          git push origin "v${VERSION}"
+
+  deploy-development:
+    name: Deploy to development
+    needs: publish
+    if: needs.publish.outputs.released == 'true'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: dev
+      version: ${{ needs.publish.outputs.version }}
+    secrets: inherit

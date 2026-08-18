@@ -1,0 +1,45 @@
+name: Promote
+
+# Manual promotion of an already-published module version to test or
+# production. Also the rollback path: promoting an older version is the same
+# operation, which is exactly why there is no separate rollback workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - tst
+          - prd
+      version:
+        description: Module set version to deploy, e.g. 0.2.0 (no leading v)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  validate-input:
+    name: Check version format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject malformed versions
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'${VERSION}' is not a bare semver string. Use 0.2.0, not v0.2.0."
+            exit 1
+          fi
+
+  promote:
+    needs: validate-input
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: ${{ inputs.environment }}
+      version: ${{ inputs.version }}
+    secrets: inherit
