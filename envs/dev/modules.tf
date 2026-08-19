@@ -11,7 +11,7 @@ module "environment" {
   version = "0.1.4" # managed by the deploy and promote workflows
 
   env                           = "dev"
-  credit_quota                  = 5
+  credit_quota                  = 6
   data_retention_days           = 1
   resource_monitor_notify_users = var.resource_monitor_notify_users
 }
