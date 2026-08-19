@@ -49,24 +49,6 @@ jobs:
           ref: main
           token: ${{ secrets.GH_PUSH_TOKEN }}
 
-      - name: Verify the version exists in Artifactory
-        env:
-          JF_URL: ${{ secrets.JF_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
-        run: |
-          # Fail before touching Snowflake if the requested version was never
-          # published - otherwise terraform init fails with a much less
-          # obvious error halfway through.
-          status=$(curl -sS -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer ${JF_ACCESS_TOKEN}" \
-            "${JF_URL%/}/artifactory/api/terraform/v1/snowflake-poc-tf-modules/snowflakepoc/snowflake-environment/snowflake/${{ inputs.version }}/download")
-
-          if [ "$status" = "404" ]; then
-            echo "::error::Module version ${{ inputs.version }} is not published in Artifactory."
-            exit 1
-          fi
-          echo "Artifactory responded ${status} for version ${{ inputs.version }}."
-
       - name: Pin ${{ inputs.environment }} to ${{ inputs.version }}
         id: pin
         env:
@@ -109,6 +91,10 @@ jobs:
           cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
           terraform_wrapper: false
 
+      # There is no separate "does this version exist" pre-flight. init resolves
+      # the pinned module from the registry and fails here if it cannot - before
+      # apply, so before anything in Snowflake changes. A hand-built existence
+      # check duplicated this and was less reliable than the thing it guarded.
       - name: terraform init
         working-directory: envs/${{ inputs.environment }}
         env:

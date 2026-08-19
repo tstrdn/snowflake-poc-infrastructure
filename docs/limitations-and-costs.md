@@ -56,6 +56,10 @@ Built and validated without access to your accounts:
   detected.
 - Snowflake CLI flags were taken from `snow --help` on version 3.24.1, not from
   documentation.
+- Module publishing to Artifactory, confirmed against the live instance:
+  `jf tf p --namespace=snowflakepoc --provider=snowflake` publishes, and the
+  registry serves the result at
+  `/artifactory/api/terraform/<repo>/v1/modules/<namespace>/<name>/<provider>/<version>`.
 - `bootstrap/generate_keypair.sh` and `set_registry_host.sh` were executed,
   including their failure paths.
 
@@ -63,10 +67,6 @@ Built and validated without access to your accounts:
 
 - Any actual Snowflake API call. Provider resource *schemas* are confirmed
   correct; provider *behaviour* against a live account is not.
-- The exact Artifactory Terraform-registry module address. The format
-  `<host>/<repo>__<namespace>/<module>/<provider>` follows JFrog's documented
-  convention, but your instance's namespace handling should be confirmed on the
-  first publish.
 - `snow dbt deploy` accepting a credential-free `profiles.yml`. This follows
   Snowflake's documented requirement that profiles define only database, role,
   schema and type, but it is the single most likely thing to need a tweak on

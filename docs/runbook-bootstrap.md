@@ -255,6 +255,33 @@ merge, and watch the artifact publish and deploy to development.
 
 ---
 
+## Troubleshooting the registry
+
+If `terraform init` cannot resolve a module, check what Artifactory actually
+holds. The registry API path is *not* the same shape as the module source
+address:
+
+```bash
+BASE=https://<host>/artifactory/api/terraform/snowflake-poc-tf-modules/v1/modules
+
+# available versions - expect 200
+curl -s -H "Authorization: Bearer <token>" \
+  "$BASE/snowflakepoc/snowflake-environment/snowflake/versions"
+
+# a specific version - expect 204
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer <token>" \
+  "$BASE/snowflakepoc/snowflake-environment/snowflake/0.1.1/download"
+
+# everything in the repository
+curl -s -H "Authorization: Bearer <token>" \
+  "https://<host>/artifactory/api/storage/snowflake-poc-tf-modules?list&deep=1&listFolders=0"
+```
+
+The module *source* address in `envs/*/modules.tf` uses the double-underscore
+form instead — `<host>/<repo>__<namespace>/<module>/<provider>` — which
+Terraform translates into the API path above. Both are correct; they are
+different interfaces to the same thing.
+
 ## 7. Verifying "build once, deploy to all"
 
 After promoting the same dbt artifact version to all three environments, compare
