@@ -8,7 +8,7 @@
 
 module "environment" {
   source  = "trialsnowflake.jfrog.io/snowflake-poc-tf-modules__snowflakepoc/snowflake-environment/snowflake"
-  version = "0.1.4" # managed by the deploy and promote workflows
+  version = "0.1.5" # managed by the deploy and promote workflows
 
   env                           = "dev"
   credit_quota                  = 6
@@ -18,7 +18,7 @@ module "environment" {
 
 module "rbac" {
   source  = "trialsnowflake.jfrog.io/snowflake-poc-tf-modules__snowflakepoc/snowflake-rbac/snowflake"
-  version = "0.1.4" # managed by the deploy and promote workflows
+  version = "0.1.5" # managed by the deploy and promote workflows
 
   env = "dev"
 
