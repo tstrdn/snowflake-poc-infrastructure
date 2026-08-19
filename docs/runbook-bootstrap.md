@@ -145,6 +145,7 @@ Finally, create a **user API token** in your HCP account settings — that is
 | `TF_API_TOKEN` | secret | HCP user API token |
 | `JF_URL` | secret | `https://mycompany.jfrog.io` |
 | `JF_ACCESS_TOKEN` | secret | JFrog identity token |
+| `GH_PUSH_TOKEN` | secret | Fine-grained PAT, Contents: read and write, both repositories |
 | `TF_CLOUD_ORGANIZATION` | variable | Your HCP organization name |
 
 `snowflake-poc-dbt`:
@@ -169,6 +170,9 @@ workflows contain no `_DEV` or `_PRD` suffixes:
 | `SF_USER` | `SVC_DBT` |
 | `SF_PRIVATE_KEY` | Contents of `keys/<env>/SVC_DBT.p8` |
 
+This repository also needs the repository-level secrets `JF_URL`,
+`JF_ACCESS_TOKEN` and `GH_PUSH_TOKEN`.
+
 Protection rules:
 
 | Environment | Required reviewers |
@@ -179,14 +183,44 @@ Protection rules:
 
 ### Branch protection
 
-On `main` in both repositories, add a ruleset that requires a pull request with
-one approval, requires status checks to pass, and blocks force pushes.
+On `main` in both repositories, add a ruleset targeting `main`, Active, that
+restricts deletions, blocks force pushes, and requires a pull request with one
+approval.
 
-**Add `github-actions[bot]` as a bypass actor.** The deploy workflows commit the
-deployed version back to `main` — `envs/<env>/modules.tf` in the infrastructure
-repository, `deploy/<env>.version` in the dbt repository — and that commit *is*
-the deployment record. Without the bypass the push is rejected and the record is
-lost. The workflows fail loudly rather than applying an unrecorded version.
+**Leave "Require status checks" off initially.** GitHub only offers checks it has
+already seen, and yours have never run. Add them after the first pull request:
+`Format, lint and scan`, `Module version bumped`, `Plan against development`.
+
+### The bypass
+
+The deploy workflows commit the deployed version back to `main` —
+`envs/<env>/modules.tf` here, `deploy/<env>.version` in the dbt repository — and
+that commit *is* the deployment record. Something has to be allowed to push it.
+
+`github-actions[bot]` **cannot** be a bypass actor on a free, user-owned
+repository; it is not offered in the bypass list. The usable entries there are
+`Deploy keys` and the role entries (`Repository admin`, `Maintain`, `Write`).
+
+This PoC therefore uses a fine-grained personal access token:
+
+1. Create a fine-grained PAT with **Contents: read and write**, scoped to both
+   repositories. Ninety days is a reasonable expiry.
+2. Store it as the `GH_PUSH_TOKEN` secret in both repositories.
+3. Add **`Repository admin`** to the ruleset bypass list. The PAT acts as its
+   owner, who holds that role.
+
+`deploy.yml` passes `GH_PUSH_TOKEN` to `actions/checkout`, which persists the
+credential so the later push uses it. `release.yml` is untouched: it pushes a
+*tag*, and a branch ruleset does not restrict tags. Do not add a tag ruleset, or
+that breaks too.
+
+A deploy key per repository is the tidier alternative — repo-scoped, non-human,
+no expiry — at the cost of SSH plumbing in the workflows.
+
+Either way you now have an automation identity that can push to `main` without
+review. That is a genuine weakening of the branch rules, accepted here because
+the alternative is a deployment whose record depends on run history. Removing it
+is hardening item 2 in `limitations-and-costs.md`.
 
 ---
 

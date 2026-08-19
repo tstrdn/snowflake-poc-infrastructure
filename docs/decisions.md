@@ -50,10 +50,12 @@ deploy workflows rewrite it, commit it, then deploy.
 **Why.** "What is running in production?" should be answerable by reading the
 repository. Run history rots, gets truncated, and cannot be diffed.
 
-**Cost.** The `github-actions[bot]` identity needs a branch-protection bypass to
-push those commits. That is a real weakening of the branch rules, accepted
-because the alternative — a deployment whose record depends on run history — is
-worse.
+**Cost.** Something must be allowed to push those commits past branch
+protection. `github-actions[bot]` cannot be a ruleset bypass actor on a free,
+user-owned repository, so this uses a fine-grained PAT held as `GH_PUSH_TOKEN`
+and the `Repository admin` bypass entry. Either way it is a real weakening of
+the branch rules, accepted because the alternative — a deployment whose record
+depends on run history — is worse.
 
 **Alternative worth considering.** Have the promote workflow open a pull request
 instead of pushing, making promotion itself reviewable and removing the bypass
