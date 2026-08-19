@@ -44,7 +44,7 @@ jobs:
       # committed back to a protected main, and github-actions[bot] cannot be
       # made a ruleset bypass actor on this account tier. actions/checkout
       # persists this credential, so the later push uses it too.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: main
           token: ${{ secrets.GH_PUSH_TOKEN }}
@@ -85,7 +85,7 @@ jobs:
           # an applied version unrecorded.
           git push origin HEAD:main
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.9.8"
           cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
