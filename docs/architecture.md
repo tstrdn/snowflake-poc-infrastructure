@@ -44,10 +44,18 @@ flowchart LR
     A -.->|promote| S3
 ```
 
-Terraform never touches Snowflake from the GitHub runner. Runs execute on HCP
-infrastructure in Remote execution mode, so the Snowflake private key for each
-account lives only in that account's HCP workspace. The runner holds an HCP API
-token and nothing else.
+**No Snowflake credential ever reaches the GitHub runner.** Runs execute on HCP
+infrastructure in Remote execution mode, so each account's private key lives
+only in that account's HCP workspace.
+
+The runner is not entirely uninvolved, though. `terraform init` installs modules
+locally even when the run itself is remote — the `cloud` block relocates the
+run, not the init — so the runner also holds a read-only Artifactory token,
+exported as `TF_TOKEN_<host>`. That token grants access to module source code
+that is already public in this repository, so it carries no secrecy the
+repository does not already give away. The security property that matters is
+narrower than "the runner touches nothing", and worth stating precisely: the
+runner can read modules, and cannot authenticate to Snowflake.
 
 The dbt pipeline does hold Snowflake credentials, because `snow dbt deploy`
 uploads project files from the runner. Those are environment-scoped GitHub

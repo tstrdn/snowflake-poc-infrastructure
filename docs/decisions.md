@@ -62,6 +62,24 @@ instead of pushing, making promotion itself reviewable and removing the bypass
 entirely. Rejected here only because it adds a second approval step to a process
 the brief asked to keep at dispatch-plus-approve.
 
+**Two consequences reviewers ask about.** Both are properties of publishing and
+then pinning, not defects, but they are easy to mistake for defects:
+
+*The pull request plan does not preview module changes.* The speculative plan
+runs against `envs/dev`, which pins the currently published module version — so
+a change under `modules/` cannot appear in it, because it has not been published
+yet. A module change is reviewed as code on the pull request, and as a plan when
+it deploys to development. Pointing the plan at the local module source instead
+would preview something other than what actually gets deployed, which is worse:
+a plan you cannot trust is more dangerous than no plan.
+
+*Environment-level parameters need a version bump to take effect.* Arguments in
+`envs/<env>/modules.tf`, such as `credit_quota`, are only applied when a
+deployment runs, and deployments are driven by releases. Changing one without
+bumping `VERSION` leaves it committed but unapplied. Adding `envs/**` to the
+release trigger would fix this, at the cost of making "a release" mean two
+different things.
+
 ---
 
 ## 4. dbt dependencies are vendored into the artifact
@@ -90,6 +108,20 @@ exist — is discovered at apply time in whichever environment drifted.
 
 **Revisit if.** The module set grows past a handful and their release cadences
 genuinely diverge.
+
+**One suppressed policy check.** Checkov's `CKV_TF_1` demands a git commit hash
+in every module source. It targets `git::` sources, where a tag can be moved and
+a reference silently changes meaning. A registry source with `version = "0.1.4"`
+provides the same guarantee by a different mechanism, so the check is skipped in
+`pr-validate.yml` with that reasoning recorded inline.
+
+Worth being precise about what is and is not guaranteed: `release.yml` refuses
+to republish a version whose git tag already exists, which prevents the pipeline
+from doing it. It does not prevent someone with Artifactory credentials from
+overwriting a published version by hand. Turning on immutability for the
+`snowflake-poc-tf-modules` repository is what would make the pin a storage-level
+guarantee rather than a convention — and it is the honest answer to the question
+`CKV_TF_1` is really asking.
 
 ---
 
