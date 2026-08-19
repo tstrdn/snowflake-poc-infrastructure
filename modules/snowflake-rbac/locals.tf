@@ -57,13 +57,15 @@ locals {
 
   schema_privileges_ro = ["USAGE"]
 
+  # CREATE MATERIALIZED VIEW is deliberately absent: materialized views are an
+  # Enterprise Edition feature, and Snowflake rejects the whole GRANT statement
+  # on a Standard account. dbt does not use them here.
   schema_privileges_rw = [
     "USAGE",
     "MONITOR",
     "CREATE TABLE",
     "CREATE VIEW",
     "CREATE DYNAMIC TABLE",
-    "CREATE MATERIALIZED VIEW",
     "CREATE STAGE",
     "CREATE FILE FORMAT",
     "CREATE SEQUENCE",

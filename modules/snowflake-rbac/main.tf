@@ -120,17 +120,11 @@ resource "snowflake_grant_privileges_to_account_role" "dbt_projects_schema" {
   }
 }
 
-resource "snowflake_grant_privileges_to_account_role" "dbt_projects_future" {
-  account_role_name = snowflake_account_role.functional["TRANSFORMER"].name
-  privileges        = ["USAGE", "MONITOR", "MODIFY"]
-
-  on_schema_object {
-    future {
-      object_type_plural = "DBT PROJECTS"
-      in_schema          = "\"${var.database_ops}\".\"${var.schema_dbt_projects}\""
-    }
-  }
-}
+# No future grant on DBT PROJECTS. MODIFY is not a valid privilege for that
+# object type, and the grant is redundant anyway: the dbt pipeline authenticates
+# as SVC_DBT, which runs as TRANSFORMER, so TRANSFORMER creates the project
+# object and owns it outright. A future grant would only matter if some other
+# role created it.
 
 # Developer and CI schemas ------------------------------------------------------
 #
