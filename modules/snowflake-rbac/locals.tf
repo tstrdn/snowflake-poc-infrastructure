@@ -43,9 +43,16 @@ locals {
       access_roles = ["RAW_RW"]
       warehouse    = var.warehouse_transform
     }
+    # RAW_RW rather than RAW_RO because dbt seeds stand in for an ingestion
+    # tool in this proof of concept - `dbt build` writes the source tables into
+    # RAW.JAFFLE_RAW, so the role running dbt needs to create them.
+    #
+    # With a real ingestion tool, LOADER would own RAW and TRANSFORMER would go
+    # back to RAW_RO. That separation is the point of having both roles, and
+    # collapsing it here is a PoC compromise, not a recommendation.
     TRANSFORMER = {
-      comment      = "Builds dbt models: reads RAW, owns ANALYTICS"
-      access_roles = ["RAW_RO", "ANALYTICS_STG_RW", "ANALYTICS_MARTS_RW"]
+      comment      = "Builds dbt models: loads seeds into RAW, owns ANALYTICS"
+      access_roles = ["RAW_RW", "ANALYTICS_STG_RW", "ANALYTICS_MARTS_RW"]
       warehouse    = var.warehouse_transform
     }
     ANALYST = {
