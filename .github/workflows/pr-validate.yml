@@ -73,6 +73,13 @@ jobs:
           soft_fail: false
           skip_check: CKV_TF_1
 
+      # Checkov runs in a container as root and writes results.sarif into the
+      # workspace root. gitleaks writes that same filename as the runner user
+      # and fails with "permission denied" - a collision between two tools with
+      # one hardcoded output path, not a finding. Clear it between them.
+      - name: Clear the Checkov report
+        run: sudo rm -f results.sarif
+
       - name: gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
