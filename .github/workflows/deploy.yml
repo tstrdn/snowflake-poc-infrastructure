@@ -40,9 +40,14 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      # GH_PUSH_TOKEN, not the default GITHUB_TOKEN. The version pin is
+      # committed back to a protected main, and github-actions[bot] cannot be
+      # made a ruleset bypass actor on this account tier. actions/checkout
+      # persists this credential, so the later push uses it too.
       - uses: actions/checkout@v4
         with:
           ref: main
+          token: ${{ secrets.GH_PUSH_TOKEN }}
 
       - name: Verify the version exists in Artifactory
         env:
@@ -91,10 +96,11 @@ jobs:
           git add "envs/${ENVIRONMENT}/modules.tf"
           git commit -m "chore(${ENVIRONMENT}): deploy module set v${VERSION}"
 
-          # Requires the github-actions bot to be a bypass actor on the main
-          # branch ruleset - see docs/runbook-bootstrap.md. Without it the push
-          # is rejected and the deployment record is lost, so fail loudly here
-          # rather than applying an unrecorded version.
+          # Pushed with GH_PUSH_TOKEN, whose owner holds the Repository admin
+          # role that the main branch ruleset lists as a bypass actor - see
+          # docs/runbook-bootstrap.md. Without it the push is rejected and the
+          # deployment record is lost, so fail loudly here rather than leaving
+          # an applied version unrecorded.
           git push origin HEAD:main
 
       - uses: hashicorp/setup-terraform@v3

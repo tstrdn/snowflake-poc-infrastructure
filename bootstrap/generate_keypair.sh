@@ -69,9 +69,11 @@ Generated $USER_NAME for $ENV_NAME:
 Next:
   SVC_TERRAFORM -> run bootstrap.sql in the $ENV_NAME account with the one-line
                    public key, then put the private key in the HCP workspace
-                   variable SNOWFLAKE_PRIVATE_KEY (sensitive, category: env).
-  SVC_DBT       -> set the one-line public key as the HCP workspace variable
-                   TF_VAR_dbt_service_user_public_key, and put the private key
+                   as the sensitive TERRAFORM variable snowflake_private_key.
+                   Not an environment variable - HCP rejects newlines in those,
+                   and a PEM has them.
+  SVC_DBT       -> set the one-line public key as the HCP Terraform variable
+                   dbt_service_user_public_key, and put the private key
                    in the snowflake-poc-dbt repository as the environment
                    secret SF_PRIVATE_KEY on the "$ENV_NAME" environment.
                    Environment-scoped secrets share one name across all three

@@ -91,23 +91,43 @@ Create three workspaces — `snowflake-poc-dev`, `snowflake-poc-tst`,
 - **Version control:** none. Runs are triggered by GitHub Actions via the API,
   so that the whole process has one front door.
 
-Per workspace, set these variables:
+Per workspace, set these variables. **Category is not cosmetic** — HCP exports
+environment variables as shell variables and rejects newlines in them, which is
+why the PEM private key is a Terraform variable and everything else is not.
 
-| Variable | Category | Sensitive | Value |
-|---|---|---|---|
-| `SNOWFLAKE_ORGANIZATION_NAME` | env | no | Your organization name |
-| `SNOWFLAKE_ACCOUNT_NAME` | env | no | That environment's account name |
-| `SNOWFLAKE_USER` | env | no | `SVC_TERRAFORM` |
-| `SNOWFLAKE_PRIVATE_KEY` | env | **yes** | Contents of `keys/<env>/SVC_TERRAFORM.p8` |
-| `SNOWFLAKE_AUTHENTICATOR` | env | no | `SNOWFLAKE_JWT` |
-| `SNOWFLAKE_ROLE` | env | no | `ACCOUNTADMIN` |
-| `TF_TOKEN_mycompany_jfrog_io` | env | **yes** | JFrog identity token |
-| `dbt_service_user_public_key` | terraform | no | Contents of `keys/<env>/SVC_DBT.pub.oneline` |
-| `resource_monitor_notify_users` | terraform | no | e.g. `["PLATFORM_ADMIN"]` (HCL format) |
+### Environment variables
 
-The `TF_TOKEN_*` variable is how Terraform authenticates to the module registry.
-Dots in the hostname become underscores: `mycompany.jfrog.io` becomes
-`TF_TOKEN_mycompany_jfrog_io`.
+| Variable | Sensitive | Value |
+|---|---|---|
+| `SNOWFLAKE_ORGANIZATION_NAME` | no | Your organization name |
+| `SNOWFLAKE_ACCOUNT_NAME` | no | That environment's account name |
+| `SNOWFLAKE_USER` | no | `SVC_TERRAFORM` |
+| `SNOWFLAKE_AUTHENTICATOR` | no | `SNOWFLAKE_JWT` |
+| `SNOWFLAKE_ROLE` | no | `ACCOUNTADMIN` |
+| `TF_TOKEN_mycompany_jfrog_io` | **yes** | JFrog identity token |
+
+### Terraform variables
+
+| Variable | Sensitive | Value |
+|---|---|---|
+| `snowflake_private_key` | **yes** | Whole `keys/<env>/SVC_TERRAFORM.p8` file, `BEGIN`/`END` lines and line breaks intact |
+| `dbt_service_user_public_key` | no | `keys/<env>/SVC_DBT.pub.oneline` — one line, no headers |
+| `resource_monitor_notify_users` | no | Optional. e.g. `["PLATFORM_ADMIN"]`, HCL format enabled |
+
+Eight variables in total, or nine with the optional one. There is deliberately
+**no `SNOWFLAKE_PRIVATE_KEY` environment variable** — the provider reads the key
+from `var.snowflake_private_key`, wired explicitly in `envs/<env>/versions.tf`.
+
+Three things that reliably go wrong here:
+
+- **`TF_TOKEN_*`** is how Terraform authenticates to the module registry, and the
+  name encodes the host: dots become underscores, no scheme, no trailing slash.
+  `mycompany.jfrog.io` becomes `TF_TOKEN_mycompany_jfrog_io`.
+- **The two keys have opposite shapes.** The private key is a multi-line PEM
+  *with* headers; the public key is a single line *without* them. Pasting the
+  `.pub` instead of the `.pub.oneline` is the common slip.
+- **Crossing environments.** Nothing rejects the `tst` key pasted into the `prd`
+  workspace; it fails much later as a JWT error. Do one workspace at a time.
 
 Finally, create a **user API token** in your HCP account settings — that is
 `TF_API_TOKEN` below.

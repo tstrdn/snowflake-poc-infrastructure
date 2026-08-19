@@ -16,7 +16,8 @@
 --   3. Run in a Snowsight worksheet as ACCOUNTADMIN.
 --
 -- The public key is not a secret. The matching .p8 private key goes into the
--- HCP Terraform workspace variable SNOWFLAKE_PRIVATE_KEY and nowhere else.
+-- HCP Terraform workspace as the sensitive Terraform variable
+-- snowflake_private_key, and nowhere else.
 
 USE ROLE ACCOUNTADMIN;
 
