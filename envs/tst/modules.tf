@@ -7,7 +7,7 @@
 # Do not edit these by hand. Use the promote workflow.
 
 module "environment" {
-  source  = "artifactory.example.com/snowflake-poc-tf-modules__snowflakepoc/snowflake-environment/snowflake"
+  source  = "trialsnowflake.jfrog.io/snowflake-poc-tf-modules__snowflakepoc/snowflake-environment/snowflake"
   version = "0.1.0" # managed by the deploy and promote workflows
 
   env                           = "tst"
@@ -17,7 +17,7 @@ module "environment" {
 }
 
 module "rbac" {
-  source  = "artifactory.example.com/snowflake-poc-tf-modules__snowflakepoc/snowflake-rbac/snowflake"
+  source  = "trialsnowflake.jfrog.io/snowflake-poc-tf-modules__snowflakepoc/snowflake-rbac/snowflake"
   version = "0.1.0" # managed by the deploy and promote workflows
 
   env = "tst"
