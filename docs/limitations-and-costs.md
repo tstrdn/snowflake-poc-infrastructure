@@ -63,10 +63,16 @@ Built and validated without access to your accounts:
 - `bootstrap/generate_keypair.sh` and `set_registry_host.sh` were executed,
   including their failure paths.
 
+Verified afterwards against the live development account:
+
+- The full infrastructure pipeline end to end — publish, tag, version-pin
+  commit past branch protection, remote apply on HCP, objects created in
+  Snowflake.
+- Key-pair authentication for `SVC_TERRAFORM`, via the fingerprint check in the
+  runbook.
+
 **Not verified, because it needs your accounts:**
 
-- Any actual Snowflake API call. Provider resource *schemas* are confirmed
-  correct; provider *behaviour* against a live account is not.
 - `snow dbt deploy` accepting a credential-free `profiles.yml`. This follows
   Snowflake's documented requirement that profiles define only database, role,
   schema and type, but it is the single most likely thing to need a tweak on
@@ -74,6 +80,25 @@ Built and validated without access to your accounts:
 - Snowsight Workspaces Git integration, which needs a Git API integration that
   may be restricted on trial accounts. If unavailable, local dbt Core
   development is unaffected.
+
+---
+
+## Found only against a live account
+
+Three things that no amount of local validation could have caught. They are
+listed because they are the shape of problem to expect when this pattern is
+applied to another platform, not because they remain unfixed.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Unsupported feature GRANT/REVOKE CREATE MATERIALIZED VIEW ON SCHEMA` | Materialized views are Enterprise Edition; these accounts are Standard | Removed the privilege. Note that Terraform issues all schema privileges as one `GRANT`, so a single unsupported privilege fails the whole statement and masks any others |
+| `Invalid object type 'DBT_PROJECT' for privilege 'MODIFY'` | `MODIFY` is not valid for `DBT PROJECT` | Removed the future grant entirely. It was redundant: `TRANSFORMER` creates the project object and therefore owns it |
+| `error looking up module versions: 401` | `terraform init` installs modules on the runner even in Remote execution mode | Runner now derives `TF_TOKEN_<host>` from `JF_URL` and authenticates to the registry too |
+
+The first two were only reachable by applying against a real account of a
+specific edition. `terraform validate` confirms a configuration is well-formed;
+it cannot know which privileges your edition supports, or which apply to an
+object type as new as `DBT PROJECT`.
 
 ---
 

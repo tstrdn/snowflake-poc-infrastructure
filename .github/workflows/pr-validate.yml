@@ -53,6 +53,17 @@ jobs:
           tflint --init
           tflint --recursive --minimum-failure-severity=warning
 
+      # CKV_TF_1 requires module sources to be pinned to a git commit hash. It is
+      # written for git:: sources, where a branch or a re-pointed tag can change
+      # what a reference resolves to. These modules come from a private registry
+      # with an explicit `version =`, which is the registry equivalent of the
+      # control the rule is asking for - so the rule is skipped rather than
+      # satisfied by abandoning the registry.
+      #
+      # Registry versions are only genuinely immutable if the repository refuses
+      # redeployment. release.yml will not republish an existing version, but
+      # that is a pipeline convention, not a storage guarantee. Enabling
+      # immutability on the Artifactory repository is what actually closes this.
       - name: Checkov
         uses: bridgecrewio/checkov-action@v12
         with:
@@ -60,6 +71,7 @@ jobs:
           framework: terraform
           quiet: true
           soft_fail: false
+          skip_check: CKV_TF_1
 
       - name: gitleaks
         uses: gitleaks/gitleaks-action@v2

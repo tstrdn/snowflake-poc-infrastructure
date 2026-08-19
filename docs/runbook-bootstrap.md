@@ -121,8 +121,17 @@ from `var.snowflake_private_key`, wired explicitly in `envs/<env>/versions.tf`.
 Three things that reliably go wrong here:
 
 - **`TF_TOKEN_*`** is how Terraform authenticates to the module registry, and the
-  name encodes the host: dots become underscores, no scheme, no trailing slash.
-  `mycompany.jfrog.io` becomes `TF_TOKEN_mycompany_jfrog_io`.
+  name encodes the host: dots become underscores, dashes become double
+  underscores, no scheme, no trailing slash. `mycompany.jfrog.io` becomes
+  `TF_TOKEN_mycompany_jfrog_io`.
+
+  **The registry is needed in two places, not one.** This HCP variable covers
+  the remote run. The GitHub runner needs it too, because `terraform init`
+  installs modules locally even when the run executes remotely. The workflows
+  derive that variable themselves from the `JF_URL` and `JF_ACCESS_TOKEN`
+  repository secrets, so there is nothing extra to configure — but if you see
+  `error looking up module versions: 401` in the Actions log rather than the
+  HCP log, that is which half is failing.
 - **The two keys have opposite shapes.** The private key is a multi-line PEM
   *with* headers; the public key is a single line *without* them. Pasting the
   `.pub` instead of the `.pub.oneline` is the common slip.
