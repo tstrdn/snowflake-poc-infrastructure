@@ -1,14 +1,17 @@
-name: Release modules
+name: Release
 
-# Publishes the Terraform module set to Artifactory as an immutable version,
-# then hands off to deploy-dev. Nothing is deployed here - this step only
-# produces the artifact that every environment will later consume.
+# Creates the protected, immutable version reference for this configuration
+# state (A9 - a Git tag, not a published artifact) and hands off to the
+# development deployment. Terraform has no build step, so there is nothing to
+# publish here: the tag *is* the version. See docs/decisions.md for why an
+# artifact registry was dropped for this repository (E2/E3).
 
 on:
   push:
     branches: [main]
     paths:
       - "modules/**"
+      - "envs/**"
       - "VERSION"
       - ".github/workflows/release.yml"
 
@@ -20,8 +23,8 @@ permissions:
   contents: write
 
 jobs:
-  publish:
-    name: Publish to Artifactory
+  tag:
+    name: Create the version tag
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -37,45 +40,19 @@ jobs:
           version=$(tr -d '[:space:]' < VERSION)
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
-          # The tag is the idempotency guard. A re-run of this workflow, or a
-          # merge that did not change VERSION, must not republish a different
-          # tree under an existing version.
+          # The tag is the idempotency guard and the immutable version
+          # reference (P3). A re-run of this workflow, or a merge that did not
+          # change VERSION, must not move an existing tag.
           if git rev-parse "v${version}" >/dev/null 2>&1; then
-            echo "Tag v${version} already exists; nothing to publish."
+            echo "Tag v${version} already exists; nothing to do."
             echo "released=false" >> "$GITHUB_OUTPUT"
           else
             echo "released=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: jfrog/setup-jfrog-cli@v5
-        if: steps.version.outputs.released == 'true'
-        env:
-          JF_URL: ${{ secrets.JF_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
-
-      - name: Publish modules
-        if: steps.version.outputs.released == 'true'
-        env:
-          JF_URL: ${{ secrets.JF_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          jf tfc --repo-deploy snowflake-poc-tf-modules
-
-          # jf tf publishes the module in the working directory. Both modules
-          # share one version: they are designed, reviewed and promoted as a
-          # set, and a split version scheme would let an environment run a
-          # combination that was never tested together.
-          for module in modules/*/; do
-            name=$(basename "$module")
-            echo "::group::publish ${name} v${VERSION}"
-            ( cd "$module" && jf tf p \
-                --namespace=snowflakepoc \
-                --provider=snowflake \
-                --tag="v${VERSION}" )
-            echo "::endgroup::"
-          done
-
+      # Tag protection (so this cannot be moved or deleted after the fact) is
+      # configured once as a repository ruleset, not by this workflow - see
+      # docs/runbook-bootstrap.md.
       - name: Tag the release
         if: steps.version.outputs.released == 'true'
         env:
@@ -83,15 +60,15 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${VERSION}" -m "Module set v${VERSION}"
+          git tag -a "v${VERSION}" -m "Configuration state v${VERSION}"
           git push origin "v${VERSION}"
 
   deploy-development:
     name: Deploy to development
-    needs: publish
-    if: needs.publish.outputs.released == 'true'
+    needs: tag
+    if: needs.tag.outputs.released == 'true'
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev
-      version: ${{ needs.publish.outputs.version }}
+      version: ${{ needs.tag.outputs.version }}
     secrets: inherit

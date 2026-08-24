@@ -25,3 +25,16 @@ variable "resource_monitor_notify_users" {
   type        = list(string)
   default     = []
 }
+
+variable "deploy_version" {
+  description = <<-EOT
+    Version being applied to this environment, e.g. "0.2.0". Passed with -var
+    by the deploy workflow, sourced from the immutable release tag it checked
+    out. Not used for any conditional logic - it only flows through to
+    module "environment".version_label, which stamps it onto a Snowflake
+    object comment so the deployed version is queryable directly from the
+    platform (E6) instead of needing a machine commit back to this repository.
+  EOT
+  type        = string
+  default     = ""
+}

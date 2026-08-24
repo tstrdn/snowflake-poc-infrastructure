@@ -1,5 +1,14 @@
 # Limitations and costs
 
+> **Superseded, not yet updated.** The promotion model changed: no Terraform
+> module registry, no machine commit to `main`, deployment from a protected
+> release tag, and a version stamped into Snowflake instead of a pin file.
+> `GH_PUSH_TOKEN` and the Artifactory Terraform-module repository referenced
+> below are no longer used by any workflow in this repository. See
+> `.github/workflows/` for the current mechanism and `../../STATE.md` for
+> what changed and why. This file has not been rewritten to match yet.
+
+
 What the trial tiers constrain, what is genuinely unverified, and what changes
 at production scale.
 

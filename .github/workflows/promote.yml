@@ -1,8 +1,32 @@
 name: Promote
 
-# Manual promotion of an already-published module version to test or
-# production. Also the rollback path: promoting an older version is the same
-# operation, which is exactly why there is no separate rollback workflow.
+# Manual promotion of an already-tagged configuration state to test or
+# production. Also the rollback path: promoting an older tag is the same
+# operation, which is exactly why there is no separate rollback workflow
+# (P6, R2).
+#
+# Implements the two-role approval requirement (E17) as two sequential gates
+# (E18), because a single GitHub Environment with several reviewers only
+# needs one of them to approve - there is no "N of M" setting. See
+# docs/decisions.md for the reasoning.
+#
+# ---------------------------------------------------------------------------
+# One-time setup this workflow depends on and cannot perform itself:
+#
+#   Four GitHub Environments must exist, in addition to the existing "tst"
+#   and "prd" deployment environments:
+#
+#     tst-approval-developer   reviewers: the developer-role approval group
+#     tst-approval-operator    reviewers: the operator-role approval group
+#     prd-approval-developer   reviewers: the developer-role approval group
+#     prd-approval-operator    reviewers: the operator-role approval group
+#
+#   Each needs "Prevent self-review" enabled so the person who ran this
+#   workflow cannot approve their own promotion. Who populates the developer
+#   and operator groups is O9 in the process specification - open, not
+#   decided here. Until these environments exist, the approval jobs below
+#   will fail to start rather than silently skip the gate.
+# ---------------------------------------------------------------------------
 
 on:
   workflow_dispatch:
@@ -15,16 +39,24 @@ on:
           - tst
           - prd
       version:
-        description: Module set version to deploy, e.g. 0.2.0 (no leading v)
+        description: Configuration version to deploy, e.g. 0.2.0 (no leading v)
         required: true
         type: string
+      policy_override:
+        description: >-
+          Set to "warehouse-size" to acknowledge a non-PROD warehouse-size
+          policy violation. Leave empty in the normal case. Recorded in this
+          run's inputs either way, so an override is always auditable.
+        required: false
+        type: string
+        default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate-input:
-    name: Check version format
+    name: Check version and tag
     runs-on: ubuntu-latest
     steps:
       - name: Reject malformed versions
@@ -36,10 +68,48 @@ jobs:
             exit 1
           fi
 
-  promote:
+      # A promotion can only ever move a version that was actually released -
+      # this cannot invent a deployment out of an arbitrary string. It does
+      # not check that the version already ran in a lower environment first
+      # (that ordering is not yet enforced anywhere - see the specification's
+      # open design considerations), only that the tag is real.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Confirm the tag exists
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! git rev-parse "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag v${VERSION} does not exist. Nothing was ever released under this version."
+            exit 1
+          fi
+          echo "Tag v${VERSION} confirmed."
+
+  # --- Gate 1 of 2: developer-role approval -----------------------------------
+  approval-developer:
+    name: Approval — developer role
     needs: validate-input
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-approval-developer
+    steps:
+      - run: echo "Approved by the developer role for ${{ inputs.environment }} v${{ inputs.version }}."
+
+  # --- Gate 2 of 2: operator-role approval, only after gate 1 -----------------
+  approval-operator:
+    name: Approval — operator role
+    needs: approval-developer
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-approval-operator
+    steps:
+      - run: echo "Approved by the operator role for ${{ inputs.environment }} v${{ inputs.version }}."
+
+  promote:
+    name: Deploy
+    needs: approval-operator
     uses: ./.github/workflows/deploy.yml
     with:
       environment: ${{ inputs.environment }}
       version: ${{ inputs.version }}
+      policy_override: ${{ inputs.policy_override }}
     secrets: inherit

@@ -37,3 +37,8 @@ output "resource_monitor" {
   description = "Resource monitor guarding both warehouses."
   value       = snowflake_resource_monitor.env.name
 }
+
+output "deployed_version" {
+  description = "Version stamped onto this environment by the deploying workflow (E6). Empty if none was passed."
+  value       = var.version_label
+}

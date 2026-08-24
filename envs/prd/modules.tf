@@ -1,24 +1,26 @@
-# The two version pins below are the deployment record for this environment.
-# They are rewritten by .github/workflows/deploy-dev.yml (development) and
-# .github/workflows/promote.yml (test and production), committed, and then
-# applied - so "which version is production running?" is answered by reading
-# this file rather than by digging through run history.
+# One root configuration, local modules, no module registry (E2/E3). What this
+# workspace runs is whatever the checked-out ref contains - deploy.yml checks
+# out the immutable release tag, never a moving branch, so "identical
+# configuration state to every environment" (P2/P3) is a property of the ref,
+# not of a version pin rewritten here.
 #
-# Do not edit these by hand. Use the promote workflow.
+# deploy_version is passed in with -var by the deploy workflow and exists only
+# to be stamped into Snowflake (module "environment"'s version_label) so the
+# deployed version is queryable directly from the platform (E6), without a
+# machine commit back to this repository (E5).
 
 module "environment" {
-  source  = "trialsnowflake.jfrog.io/snowflake-poc-tf-modules__snowflakepoc/snowflake-environment/snowflake"
-  version = "0.1.0" # managed by the deploy and promote workflows
+  source = "../../modules/snowflake-environment"
 
   env                           = "prd"
   credit_quota                  = 10
   data_retention_days           = 7
   resource_monitor_notify_users = var.resource_monitor_notify_users
+  version_label                 = var.deploy_version
 }
 
 module "rbac" {
-  source  = "trialsnowflake.jfrog.io/snowflake-poc-tf-modules__snowflakepoc/snowflake-rbac/snowflake"
-  version = "0.1.0" # managed by the deploy and promote workflows
+  source = "../../modules/snowflake-rbac"
 
   env = "prd"
 

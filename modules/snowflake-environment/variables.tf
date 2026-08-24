@@ -49,3 +49,15 @@ variable "data_retention_days" {
   type        = number
   default     = 1
 }
+
+variable "version_label" {
+  description = <<-EOT
+    Version deployed to this environment, e.g. "0.2.0". Stamped onto the OPS
+    database comment (E6) so "what is this environment running?" can be
+    answered by querying Snowflake directly, without trusting a pipeline log
+    or a version file in the repository. Empty by default so the module
+    remains usable without it (e.g. local terraform plan during development).
+  EOT
+  type        = string
+  default     = ""
+}

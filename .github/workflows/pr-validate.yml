@@ -53,17 +53,18 @@ jobs:
           tflint --init
           tflint --recursive --minimum-failure-severity=warning
 
-      # CKV_TF_1 requires module sources to be pinned to a git commit hash. It is
-      # written for git:: sources, where a branch or a re-pointed tag can change
-      # what a reference resolves to. These modules come from a private registry
-      # with an explicit `version =`, which is the registry equivalent of the
-      # control the rule is asking for - so the rule is skipped rather than
-      # satisfied by abandoning the registry.
+      # CKV_TF_1 requires module sources to be pinned to a git commit hash. It
+      # is written for git:: sources, where a branch or a re-pointed tag can
+      # change what a reference resolves to. Modules are now local relative
+      # paths (E2/E3), not a rule this check is designed for - Checkov's own
+      # immutability concern is instead satisfied by the whole configuration
+      # being deployed from a protected, immutable release tag (P3), which is
+      # a repository-wide guarantee rather than a per-module one.
       #
-      # Registry versions are only genuinely immutable if the repository refuses
-      # redeployment. release.yml will not republish an existing version, but
-      # that is a pipeline convention, not a storage guarantee. Enabling
-      # immutability on the Artifactory repository is what actually closes this.
+      # Left skipped defensively rather than removed outright: this has not
+      # been re-run against Checkov since the source change, so it is not yet
+      # confirmed the rule stops firing on local paths on its own. If a future
+      # PR validation run shows CKV_TF_1 passing without the skip, remove it.
       - name: Checkov
         uses: bridgecrewio/checkov-action@v12
         with:
@@ -86,25 +87,27 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   version-bump:
-    name: Module version bumped
+    name: VERSION bumped
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      # The modules are published artifacts. Changing one without bumping the
-      # version would silently republish a different thing under the same
-      # number, which breaks the promise that a pinned version is immutable.
-      - name: Require a VERSION bump when modules change
+      # VERSION becomes the release tag (A9), which is the only version
+      # reference this repository has now that there is no module registry
+      # (E2/E3). Changing the configuration without bumping it would mean the
+      # same tag could point at two different trees over time, which is
+      # exactly what tag protection and this check exist to prevent.
+      - name: Require a VERSION bump when the configuration changes
         run: |
           base="origin/${{ github.base_ref }}"
           git fetch --quiet origin "${{ github.base_ref }}"
 
-          if ! git diff --quiet "$base" HEAD -- modules/; then
+          if ! git diff --quiet "$base" HEAD -- modules/ envs/; then
             if git diff --quiet "$base" HEAD -- VERSION; then
-              echo "::error file=VERSION::modules/ changed but VERSION did not."
-              echo "Bump VERSION so the published module set gets a new, immutable version."
+              echo "::error file=VERSION::modules/ or envs/ changed but VERSION did not."
+              echo "Bump VERSION so the change gets a new, immutable tag."
               exit 1
             fi
 
@@ -140,28 +143,8 @@ jobs:
 
       # A speculative run: HCP plans against the development workspace's real
       # state but cannot apply. Snowflake credentials stay in HCP - this runner
-      # never holds them.
-      # terraform init installs modules on this runner even though the run
-      # itself executes on HCP - the cloud block moves the run, not the init.
-      # So the runner needs read access to the module registry. Terraform reads
-      # credentials from TF_TOKEN_<host>, where dots become underscores and
-      # dashes become double underscores, so the name is derived from JF_URL
-      # rather than hardcoded.
-      - name: Authenticate to the module registry
-        env:
-          JF_URL: ${{ secrets.JF_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
-        run: |
-          host="${JF_URL#https://}"
-          host="${host#http://}"
-          host="${host%%/*}"
-
-          var="TF_TOKEN_$(printf '%s' "$host" | sed -e 's/-/__/g' -e 's/\./_/g')"
-
-          echo "::add-mask::${JF_ACCESS_TOKEN}"
-          echo "${var}=${JF_ACCESS_TOKEN}" >> "$GITHUB_ENV"
-          echo "Registry credentials exported as ${var} for host ${host}"
-
+      # never holds them. Modules are local (E2/E3), so init needs no registry
+      # authentication - it only resolves the Snowflake provider.
       - name: terraform init
         working-directory: envs/dev
         env:

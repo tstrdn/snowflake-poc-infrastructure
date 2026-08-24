@@ -1,11 +1,15 @@
 name: Deploy
 
-# Reusable deployment of one module version to one environment.
+# Reusable deployment of one immutable configuration state to one environment.
 #
 # Called by release.yml for development (automatically) and by promote.yml for
-# test and production (manually, behind an approval gate). Both paths run this
-# identical job, so a promotion is not a different process from a deployment -
-# it is the same process pointed at a different account.
+# test and production (manually, behind a two-role approval - see promote.yml).
+# All three paths run this identical job against the identical tagged ref, so
+# a promotion is not a different process from a deployment - it is the same
+# process pointed at a different account (P2). There is no per-environment
+# version pin file: what is deployed is answered by which tag was checked out,
+# by HCP Terraform's own run history, and by the version stamped into
+# Snowflake at the end of this job (E5/E6).
 
 on:
   workflow_call:
@@ -15,12 +19,20 @@ on:
         required: true
         type: string
       version:
-        description: Module set version to deploy
+        description: Configuration version to deploy (bare semver, no leading v)
         required: true
         type: string
+      policy_override:
+        description: >-
+          Set to "warehouse-size" to acknowledge and proceed past a non-PROD
+          warehouse-size policy violation (rule R4). Every other rule is
+          non-overridable. Leave empty in the normal case.
+        required: false
+        type: string
+        default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   deploy:
@@ -29,7 +41,10 @@ jobs:
 
     # The gate. Reviewers configured on the tst and prd environments hold the
     # job here until someone approves. Development has no reviewers, so it
-    # runs straight through.
+    # runs straight through. For tst/prd this job itself is only reached after
+    # promote.yml's two sequential approval jobs have both passed (E17/E18) -
+    # this "environment:" line is a second, independent lock, not the whole
+    # control.
     environment: ${{ inputs.environment }}
 
     # HCP Terraform's free tier allows one concurrent run per organization, and
@@ -40,50 +55,13 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      # GH_PUSH_TOKEN, not the default GITHUB_TOKEN. The version pin is
-      # committed back to a protected main, and github-actions[bot] cannot be
-      # made a ruleset bypass actor on this account tier. actions/checkout
-      # persists this credential, so the later push uses it too.
+      # The immutable tag, not a moving branch. Every environment that deploys
+      # version X.Y.Z checks out the exact same tree - this is what makes "the
+      # identical configuration state reaches every environment" (A10/A18/A24)
+      # a property of the ref rather than a promise a script has to keep.
       - uses: actions/checkout@v5
         with:
-          ref: main
-          token: ${{ secrets.GH_PUSH_TOKEN }}
-
-      - name: Pin ${{ inputs.environment }} to ${{ inputs.version }}
-        id: pin
-        env:
-          ENVIRONMENT: ${{ inputs.environment }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          file="envs/${ENVIRONMENT}/modules.tf"
-
-          sed -i -E "s|^(  version = )\"[^\"]+\"|\1\"${VERSION}\"|" "$file"
-
-          if git diff --quiet -- "$file"; then
-            echo "Already pinned to ${VERSION}; applying anyway to converge state."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            git diff -- "$file"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Record the deployment
-        if: steps.pin.outputs.changed == 'true'
-        env:
-          ENVIRONMENT: ${{ inputs.environment }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "envs/${ENVIRONMENT}/modules.tf"
-          git commit -m "chore(${ENVIRONMENT}): deploy module set v${VERSION}"
-
-          # Pushed with GH_PUSH_TOKEN, whose owner holds the Repository admin
-          # role that the main branch ruleset lists as a bypass actor - see
-          # docs/runbook-bootstrap.md. Without it the push is rejected and the
-          # deployment record is lost, so fail loudly here rather than leaving
-          # an applied version unrecorded.
-          git push origin HEAD:main
+          ref: refs/tags/v${{ inputs.version }}
 
       - uses: hashicorp/setup-terraform@v4
         with:
@@ -91,42 +69,42 @@ jobs:
           cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
           terraform_wrapper: false
 
-      # terraform init installs modules on this runner even though the run
-      # itself executes on HCP - the cloud block moves the run, not the init.
-      # So the runner needs read access to the module registry. Terraform reads
-      # credentials from TF_TOKEN_<host>, where dots become underscores and
-      # dashes become double underscores, so the name is derived from JF_URL
-      # rather than hardcoded.
-      - name: Authenticate to the module registry
-        env:
-          JF_URL: ${{ secrets.JF_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
-        run: |
-          host="${JF_URL#https://}"
-          host="${host#http://}"
-          host="${host%%/*}"
-
-          var="TF_TOKEN_$(printf '%s' "$host" | sed -e 's/-/__/g' -e 's/\./_/g')"
-
-          echo "::add-mask::${JF_ACCESS_TOKEN}"
-          echo "${var}=${JF_ACCESS_TOKEN}" >> "$GITHUB_ENV"
-          echo "Registry credentials exported as ${var} for host ${host}"
-
-      # There is no separate "does this version exist" pre-flight. init resolves
-      # the pinned module from the registry and fails here if it cannot - before
-      # apply, so before anything in Snowflake changes. A hand-built existence
-      # check duplicated this and was less reliable than the thing it guarded.
+      # Modules are local (E2/E3) - init only resolves the provider, no
+      # registry credentials are needed on this runner.
       - name: terraform init
         working-directory: envs/${{ inputs.environment }}
         env:
           TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
         run: terraform init -input=false
 
+      - name: terraform plan
+        working-directory: envs/${{ inputs.environment }}
+        env:
+          TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
+        run: |
+          terraform plan -input=false -out=tfplan \
+            -var="deploy_version=${{ inputs.version }}"
+          terraform show -json tfplan > tfplan.json
+
+      # G2, the CI-side implementation. This is NOT yet the server-side,
+      # non-bypassable Sentinel/OPA check the target design calls for (spec
+      # §5.3, §9.1) - it runs on this runner rather than inside Terraform
+      # Enterprise, so it is only as trustworthy as this workflow file. It
+      # stands in until the HCP organization's actual policy-set tier is
+      # verified. See docs/decisions.md.
+      - name: Policy check
+        working-directory: envs/${{ inputs.environment }}
+        env:
+          POLICY_OVERRIDE: ${{ inputs.policy_override }}
+        run: ../../.github/scripts/policy_check.sh tfplan.json ${{ inputs.environment }}
+
+      # Applies the exact plan that was policy-checked above, not a freshly
+      # computed one - what was reviewed is what runs.
       - name: terraform apply
         working-directory: envs/${{ inputs.environment }}
         env:
           TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
-        run: terraform apply -input=false -auto-approve
+        run: terraform apply -input=false tfplan
 
       - name: Summarise
         if: always()
@@ -135,12 +113,16 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           {
-            echo "## ${ENVIRONMENT} — module set v${VERSION}"
+            echo "## ${ENVIRONMENT} — configuration v${VERSION}"
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| Environment | \`${ENVIRONMENT}\` |"
-            echo "| Module version | \`${VERSION}\` |"
+            echo "| Version (tag) | \`v${VERSION}\` |"
             echo "| HCP workspace | \`snowflake-poc-${ENVIRONMENT}\` |"
             echo "| Result | ${{ job.status }} |"
+            echo
+            echo "What this environment is running can also be read directly from"
+            echo "Snowflake: \`DESCRIBE DATABASE OPS\` on this account shows the"
+            echo "deployed version in the comment (E6)."
           } >> "$GITHUB_STEP_SUMMARY"
