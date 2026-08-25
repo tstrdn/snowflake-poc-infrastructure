@@ -1,10 +1,16 @@
 name: Release
 
 # Creates the protected, immutable version reference for this configuration
-# state (A9 - a Git tag, not a published artifact) and hands off to the
-# development deployment. Terraform has no build step, so there is nothing to
-# publish here: the tag *is* the version. See docs/decisions.md for why an
-# artifact registry was dropped for this repository (E2/E3).
+# state (A9 - a Git tag, not a published artifact). Terraform has no build
+# step, so there is nothing to publish here: the tag *is* the version. See
+# docs/decisions.md for why an artifact registry was dropped for this
+# repository (E2/E3).
+#
+# There is no deploy-to-development job here anymore. The dev workspace is
+# VCS-driven and tracks this branch directly (see docs/decisions.md) - TFE
+# picks up this same push on its own, off this runner, the moment it lands.
+# This workflow's only remaining job is the tag itself, which promote.yml
+# later resolves to a commit when moving env/tst or env/prd.
 
 on:
   push:
@@ -62,13 +68,3 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v${VERSION}" -m "Configuration state v${VERSION}"
           git push origin "v${VERSION}"
-
-  deploy-development:
-    name: Deploy to development
-    needs: tag
-    if: needs.tag.outputs.released == 'true'
-    uses: ./.github/workflows/deploy.yml
-    with:
-      environment: dev
-      version: ${{ needs.tag.outputs.version }}
-    secrets: inherit

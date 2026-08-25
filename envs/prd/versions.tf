@@ -8,9 +8,16 @@ terraform {
     }
   }
 
-  # State, locking and remote execution live in HCP Terraform. The organization
-  # comes from the TF_CLOUD_ORGANIZATION environment variable so this file holds
-  # no account-specific identifiers.
+  # State, locking and execution live in Terraform Enterprise. This workspace
+  # is VCS-driven (docs/decisions.md), connected to this repository directly
+  # in the TFE UI - that connection is what resolves organization and
+  # workspace for every real run, not anything in this block or a CI
+  # environment variable. No workflow sets one anymore.
+  #
+  # The block still matters for one thing: `terraform login` and a local
+  # `terraform plan` against this workspace's real state, if you want that
+  # for manual troubleshooting. policy-check.yml's plan does not use this
+  # backend at all - it strips this whole block first (docs/decisions.md).
   cloud {
     workspaces {
       name = "snowflake-poc-prd"

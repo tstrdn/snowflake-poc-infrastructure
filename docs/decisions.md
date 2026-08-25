@@ -1,12 +1,10 @@
 # Decision record
 
-> **Superseded, not yet updated.** The promotion model changed: no Terraform
-> module registry, no machine commit to `main`, deployment from a protected
-> release tag, and a version stamped into Snowflake instead of a pin file.
-> `GH_PUSH_TOKEN` and the Artifactory Terraform-module repository referenced
-> below are no longer used by any workflow in this repository. See
-> `.github/workflows/` for the current mechanism and `../../STATE.md` for
-> what changed and why. This file has not been rewritten to match yet.
+> **Partially superseded.** The promotion model changed twice since most of
+> this was written: modules moved from an Artifactory registry to local
+> paths (some prose below still assumes the registry), and this repository's
+> Terraform Enterprise workspaces moved from CLI-driven to VCS-driven - see
+> decision 9 below, which **is** current.
 
 
 The choices worth arguing about, and what would change them.
@@ -181,3 +179,59 @@ standalone refuses to load a Snowflake profile without an `account`.
 **Cost.** The deployed `profiles.yml` is not validated until deploy time. The
 failure is immediate and obvious when it happens, so this is accepted rather
 than worked around.
+
+---
+
+## 9. VCS-driven Terraform Enterprise, not CLI-driven or API-driven
+
+**Decision.** Each of the three TFE workspaces is connected directly to this
+GitHub repository and watches one branch: `snowflake-poc-dev` watches `main`,
+`snowflake-poc-tst` watches `env/tst`, `snowflake-poc-prd` watches `env/prd`.
+TFE plans and applies on its own, off any GitHub Actions runner, the moment a
+watched branch moves. `promote.yml` no longer runs `terraform apply`, or even
+`terraform plan` against the real workspace - it moves the target
+environment's branch (Git only) and stops.
+
+**Why.** This repository originally used CLI-driven runs: `terraform
+init/plan/apply` executed on the GitHub runner, remotely against TFE, which
+requires the *runner* to reach TFE directly. That connectivity cannot be
+assumed here - see the open risk below. VCS-driven flips which party needs
+to reach which: TFE reaches out to GitHub on its own (to clone, and to post
+run status back as a commit/PR check), and GitHub calls TFE inbound only via
+the webhook it registered when the workspace was connected. The runner is not
+on either path - it never needs to reach TFE for a deployment to happen.
+
+Promoting to test or production is now "move a Git branch to a chosen tag's
+tree," not "run `terraform apply` with that tag checked out." Each promotion,
+including a rollback, is a new commit (never a force-push) so the branch's
+history stays a complete, append-only promotion log - see `promote.yml`'s
+header comment.
+
+**Cost - the CI-side G2 policy check lost its input.** It used to inspect the
+JSON from the real `terraform plan` GitHub Actions ran directly. There is no
+such plan on this runner anymore - TFE computes the real one, itself,
+somewhere this runner cannot see. `policy-check.yml` now runs its own
+throwaway local plan (cloud block stripped, fresh empty local state, real
+Snowflake credentials duplicated into GitHub Environment secrets purely for
+this) solely to read resource attributes for the five rules. It is checking
+the same configuration the real run will apply, but it is a second, separate
+plan, not the one TFE actually uses - a gap that would matter more if this
+repository had TFE Sentinel/OPA policies (the actual, non-bypassable G2) to
+fall back to; it does not, on this tier.
+
+**Open risk - the untested direction.** VCS-driven trades "GitHub runner
+reaches TFE" for "GitHub.com reaches TFE" (webhook delivery) and "TFE reaches
+GitHub.com" (clone, status posting). Neither has been confirmed working in
+this deployment - TFE runs privately in GCP, and whether GitHub's webhook
+infrastructure can reach it, or whether TFE's egress can reach github.com,
+is unverified as of this decision. If webhook delivery turns out not to
+work, VCS-driven workspaces still function for on-demand runs (a human
+starting one from the TFE UI, assuming the UI itself is reachable), but lose
+the automatic "push and TFE reacts" behavior the whole design assumes. This
+is not this repository's problem to solve; see `docs/limitations-and-costs.md`.
+
+**Revisit if.** The GitHub-runner-to-TFE network path turns out to be the
+easier one to open after all, or the org standardizes on API-driven runs
+with a purpose-built trigger service positioned to reach TFE directly - in
+either case, CLI/API-driven is a smaller workflow surface than what is here
+now.

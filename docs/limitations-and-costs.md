@@ -1,12 +1,11 @@
 # Limitations and costs
 
-> **Superseded, not yet updated.** The promotion model changed: no Terraform
-> module registry, no machine commit to `main`, deployment from a protected
-> release tag, and a version stamped into Snowflake instead of a pin file.
-> `GH_PUSH_TOKEN` and the Artifactory Terraform-module repository referenced
-> below are no longer used by any workflow in this repository. See
-> `.github/workflows/` for the current mechanism and `../../STATE.md` for
-> what changed and why. This file has not been rewritten to match yet.
+> **Partially superseded.** The promotion model changed twice: modules moved
+> off an Artifactory registry to local paths (not reflected everywhere
+> below), and this repository's TFE workspaces moved from CLI-driven to
+> VCS-driven, adding the network-dependency row under "Trial-tier
+> constraints" and hardening item 8 below - both current. `GH_PUSH_TOKEN` is
+> back, scoped to `env/tst`/`env/prd` only - see `docs/runbook-bootstrap.md`.
 
 
 What the trial tiers constrain, what is genuinely unverified, and what changes
@@ -25,6 +24,7 @@ at production scale.
 | GitHub Free: 2,000 Actions minutes/month | Not a constraint — Terraform executes on HCP, dbt executes in Snowflake | Runners here mostly orchestrate |
 | dbt project limit: 20,000 files | Not close, even with `dbt_packages` vendored | Watch if many large packages accumulate |
 | No concurrent `EXECUTE DBT PROJECT` on one object | Deployments to an environment queue via workflow concurrency groups | Deploy duplicate project objects if genuine parallelism is needed |
+| **Terraform Enterprise network reachability is unconfirmed** | This repository's Terraform track moved to a VCS-driven workflow specifically because the GitHub runner cannot be assumed to reach TFE directly (see `docs/decisions.md`, decision 9). VCS-driven trades that for a *different* untested path: GitHub's webhook delivery reaching TFE inbound, and TFE reaching github.com outbound. Neither is confirmed as of this writing - TFE runs privately in GCP. If the webhook direction does not work, `main`/`env/tst`/`env/prd` still move correctly (pure Git operations), but nothing automatically plans in TFE until someone starts a run from its UI by hand | Confirm both directions with whoever manages the TFE deployment's network, or relocate/peer the runner so CLI-driven becomes viable again - either resolves this outright |
 
 ---
 
@@ -133,3 +133,8 @@ Roughly in order of importance:
    own promotions in this PoC. Real separation of duties needs a distinct group.
 7. **Add key rotation.** `generate_keypair.sh` supports rotation via
    `rsa_public_key_2`, but nothing schedules or enforces it.
+8. **Confirm and, if needed, fix TFE reachability.** The VCS-driven design
+   assumes GitHub's webhook infrastructure can reach this TFE instance and
+   that TFE can reach github.com - see the row above. Until confirmed, treat
+   "push and it deploys automatically" as unverified for `tst`/`prd`, where a
+   stalled webhook is easy to miss since nothing in GitHub surfaces it.
