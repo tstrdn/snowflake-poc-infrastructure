@@ -3,8 +3,9 @@ name: Deploy
 # Reusable deployment of one immutable configuration state to one environment.
 #
 # Called by release.yml for development (automatically) and by promote.yml for
-# test and production (manually, behind a two-role approval - see promote.yml).
-# All three paths run this identical job against the identical tagged ref, so
+# test and production (manually - see promote.yml for the current PoC-scope
+# approval decision). All three paths run this identical job against the
+# identical tagged ref, so
 # a promotion is not a different process from a deployment - it is the same
 # process pointed at a different account (P2). There is no per-environment
 # version pin file: what is deployed is answered by which tag was checked out,
@@ -39,12 +40,10 @@ jobs:
     name: Apply ${{ inputs.version }} to ${{ inputs.environment }}
     runs-on: ubuntu-latest
 
-    # The gate. Reviewers configured on the tst and prd environments hold the
-    # job here until someone approves. Development has no reviewers, so it
-    # runs straight through. For tst/prd this job itself is only reached after
-    # promote.yml's two sequential approval jobs have both passed (E17/E18) -
-    # this "environment:" line is a second, independent lock, not the whole
-    # control.
+    # Whatever reviewer settings the "dev"/"tst"/"prd" GitHub Environment
+    # itself carries (if any) still apply here - this line was not added by
+    # the PoC-scope decision to drop the two-role approval chain, and isn't
+    # removed by it either. It is independent of, and predates, that chain.
     environment: ${{ inputs.environment }}
 
     # HCP Terraform's free tier allows one concurrent run per organization, and
