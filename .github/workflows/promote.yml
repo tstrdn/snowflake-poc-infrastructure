@@ -5,27 +5,18 @@ name: Promote
 # operation, which is exactly why there is no separate rollback workflow
 # (P6, R2).
 #
-# Implements the two-role approval requirement (E17) as two sequential gates
-# (E18), because a single GitHub Environment with several reviewers only
-# needs one of them to approve - there is no "N of M" setting. See
-# docs/decisions.md for the reasoning.
-#
 # ---------------------------------------------------------------------------
-# One-time setup this workflow depends on and cannot perform itself:
+# No approval gate here by deliberate PoC scope decision.
 #
-#   Four GitHub Environments must exist, in addition to the existing "tst"
-#   and "prd" deployment environments:
-#
-#     tst-approval-developer   reviewers: the developer-role approval group
-#     tst-approval-operator    reviewers: the operator-role approval group
-#     prd-approval-developer   reviewers: the developer-role approval group
-#     prd-approval-operator    reviewers: the operator-role approval group
-#
-#   Each needs "Prevent self-review" enabled so the person who ran this
-#   workflow cannot approve their own promotion. Who populates the developer
-#   and operator groups is O9 in the process specification - open, not
-#   decided here. Until these environments exist, the approval jobs below
-#   will fail to start rather than silently skip the gate.
+# The process specification's target state (E17) calls for two-role approval
+# on every promotion to TEST and PROD, and E18 records how that would be
+# implemented - two sequential GitHub Environments per target environment,
+# each with its own reviewer group and self-review disabled. That design is
+# unchanged and still the intended end state; it is simply out of scope for
+# this PoC, which promotes on the "deploy" GitHub Environment alone (whatever
+# reviewer settings that carries, if any) and otherwise runs straight
+# through. Re-adding the two-role chain removed here is the way back to
+# E17/E18 once approver groups are decided (O9).
 # ---------------------------------------------------------------------------
 
 on:
@@ -86,27 +77,9 @@ jobs:
           fi
           echo "Tag v${VERSION} confirmed."
 
-  # --- Gate 1 of 2: developer-role approval -----------------------------------
-  approval-developer:
-    name: Approval — developer role
-    needs: validate-input
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}-approval-developer
-    steps:
-      - run: echo "Approved by the developer role for ${{ inputs.environment }} v${{ inputs.version }}."
-
-  # --- Gate 2 of 2: operator-role approval, only after gate 1 -----------------
-  approval-operator:
-    name: Approval — operator role
-    needs: approval-developer
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}-approval-operator
-    steps:
-      - run: echo "Approved by the operator role for ${{ inputs.environment }} v${{ inputs.version }}."
-
   promote:
     name: Deploy
-    needs: approval-operator
+    needs: validate-input
     uses: ./.github/workflows/deploy.yml
     with:
       environment: ${{ inputs.environment }}
