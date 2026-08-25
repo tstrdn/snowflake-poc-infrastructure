@@ -1,8 +1,17 @@
 name: PR validation
 
 # Every check that can fail without touching Snowflake runs first and in
-# parallel. The speculative plan runs last, because it is the only job that
-# needs credentials and the only one that costs anything.
+# parallel. The policy check runs last, because it is the only job that needs
+# credentials and the only one that costs anything.
+#
+# There is no speculative-plan-for-review job here anymore. Dev is a
+# VCS-driven TFE workspace (see docs/decisions.md) - TFE runs its own
+# speculative plan against this PR natively, on its own connection to
+# GitHub, and posts the result as a status check on the PR. This runner
+# cannot assume it can reach TFE to do that itself. The policy-check job
+# below still runs a plan, but a throwaway local one, only to read resource
+# attributes for the five policy rules - never against the real workspace,
+# never applied.
 
 on:
   pull_request:
@@ -125,98 +134,10 @@ jobs:
             echo "No module changes; VERSION bump not required."
           fi
 
-  plan:
-    name: Plan against development
-    runs-on: ubuntu-latest
+  policy-check:
+    name: Policy check
     needs: [static, version-bump]
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
-          terraform_wrapper: false
-
-      # A speculative run: HCP plans against the development workspace's real
-      # state but cannot apply. Snowflake credentials stay in HCP - this runner
-      # never holds them. Modules are local (E2/E3), so init needs no registry
-      # authentication - it only resolves the Snowflake provider.
-      - name: terraform init
-        working-directory: envs/dev
-        env:
-          TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
-        run: terraform init -input=false
-
-      - name: terraform plan
-        id: plan
-        working-directory: envs/dev
-        env:
-          TF_CLOUD_ORGANIZATION: ${{ vars.TF_CLOUD_ORGANIZATION }}
-        run: |
-          set +e
-          terraform plan -input=false -no-color > plan.txt 2>&1
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-          cat plan.txt
-
-      - name: Comment plan on the pull request
-        uses: actions/github-script@v8
-        env:
-          PLAN_EXIT: ${{ steps.plan.outputs.exit_code }}
-        with:
-          script: |
-            const fs = require('fs');
-            const raw = fs.readFileSync('envs/dev/plan.txt', 'utf8');
-            const failed = process.env.PLAN_EXIT !== '0';
-
-            // GitHub rejects comments over 65536 characters.
-            const limit = 60000;
-            const plan = raw.length > limit
-              ? raw.slice(0, limit) + '\n\n... truncated. See the full plan in the workflow log.'
-              : raw;
-
-            const body = [
-              `### Terraform plan — development ${failed ? '❌ failed' : '✅'}`,
-              '',
-              'Speculative plan against the `snowflake-poc-dev` workspace. Applying happens on merge, not here.',
-              '',
-              '<details><summary>Plan output</summary>',
-              '',
-              '```terraform',
-              plan,
-              '```',
-              '',
-              '</details>',
-            ].join('\n');
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('### Terraform plan — development'));
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
-
-      - name: Fail if the plan failed
-        if: steps.plan.outputs.exit_code != '0'
-        run: exit 1
+    uses: ./.github/workflows/policy-check.yml
+    with:
+      environment: dev
+    secrets: inherit

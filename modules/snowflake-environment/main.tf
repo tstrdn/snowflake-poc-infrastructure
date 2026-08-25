@@ -65,10 +65,11 @@ resource "snowflake_database" "analytics" {
 
 resource "snowflake_database" "ops" {
   name = "OPS"
-  # The version suffix is the version stamp (E6): the deployed infrastructure
-  # version, queryable directly from Snowflake with DESCRIBE DATABASE OPS or
-  # SHOW DATABASES LIKE 'OPS', rather than only from CI logs or a repo file.
-  comment                     = "Platform operations: dbt project objects, pipeline metadata - ${upper(var.env)}${var.version_label != "" ? " - v${var.version_label}" : ""}"
+  # The suffix is the version stamp (E6): what is deployed here, queryable
+  # directly from Snowflake with SHOW DATABASES LIKE 'OPS' (DESCRIBE DATABASE
+  # lists the schemas inside OPS, not OPS's own comment - it is not this),
+  # rather than only from CI logs or a repo file.
+  comment                     = "Platform operations: dbt project objects, pipeline metadata - ${upper(var.env)}${var.version_label != "" ? " - ${var.version_label}" : ""}"
   data_retention_time_in_days = var.data_retention_days
 }
 

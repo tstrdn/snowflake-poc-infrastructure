@@ -26,14 +26,20 @@ variable "resource_monitor_notify_users" {
   default     = []
 }
 
-variable "deploy_version" {
+variable "TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA" {
   description = <<-EOT
-    Version being applied to this environment, e.g. "0.2.0". Passed with -var
-    by the deploy workflow, sourced from the immutable release tag it checked
-    out. Not used for any conditional logic - it only flows through to
-    module "environment".version_label, which stamps it onto a Snowflake
-    object comment so the deployed version is queryable directly from the
-    platform (E6) instead of needing a machine commit back to this repository.
+    Auto-injected by TFE on every VCS-driven run, if a variable with this
+    exact name is declared - the full commit SHA of the configuration version
+    being planned/applied (see docs/decisions.md). Not used for any
+    conditional logic - it only flows through to module
+    "environment".version_label, which stamps it onto a Snowflake object
+    comment so the deployed commit is queryable directly from the platform
+    (E6) instead of needing a machine commit back to this repository.
+
+    Empty outside a real TFE run - policy-check.yml's throwaway local plan
+    has no TFE run to inject it from, and passes its own value (a version
+    tag, not a commit SHA) purely for a readable plan; that plan is never
+    applied, so the mismatch in what the string represents does not matter.
   EOT
   type        = string
   default     = ""

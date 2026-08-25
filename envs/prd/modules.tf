@@ -1,13 +1,14 @@
-# One root configuration, local modules, no module registry (E2/E3). What this
-# workspace runs is whatever the checked-out ref contains - deploy.yml checks
-# out the immutable release tag, never a moving branch, so "identical
-# configuration state to every environment" (P2/P3) is a property of the ref,
-# not of a version pin rewritten here.
+# One root configuration, local modules, no module registry (E2/E3). This
+# workspace is VCS-driven (docs/decisions.md) and watches one branch only -
+# dev watches `main`, tst watches env/tst, prd watches env/prd. What it runs
+# is always whatever that branch's HEAD contains; promote.yml moves env/tst
+# and env/prd to a release tag's tree, never anything this file pins.
 #
-# deploy_version is passed in with -var by the deploy workflow and exists only
-# to be stamped into Snowflake (module "environment"'s version_label) so the
-# deployed version is queryable directly from the platform (E6), without a
-# machine commit back to this repository (E5).
+# TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA is auto-injected by TFE on every
+# real run and exists only to be stamped into Snowflake (module
+# "environment"'s version_label) so the deployed commit is queryable
+# directly from the platform (E6), without a machine commit back to this
+# repository (E5).
 
 module "environment" {
   source = "../../modules/snowflake-environment"
@@ -16,7 +17,7 @@ module "environment" {
   credit_quota                  = 10
   data_retention_days           = 7
   resource_monitor_notify_users = var.resource_monitor_notify_users
-  version_label                 = var.deploy_version
+  version_label                 = var.TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA
 }
 
 module "rbac" {
