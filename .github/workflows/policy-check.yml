@@ -1,0 +1,108 @@
+name: Policy check
+
+# Reusable, TFE-independent read of the five documented policy rules (G2,
+# spec §5.3, V8). Called from pr-validate.yml (against dev, on every PR) and
+# from promote.yml (against the target environment, before a promotion moves
+# an env/* branch).
+#
+# Why this exists as its own local plan instead of inspecting the real TFE
+# run: this runner cannot assume it can reach Terraform Enterprise at all -
+# that is the whole reason this repository moved to a VCS-driven workflow
+# (see docs/decisions.md). A VCS-driven workspace is planned and applied by
+# TFE itself, off this runner entirely, so there is no tfplan.json from the
+# real run for this runner to inspect. This job produces its own, throwaway
+# plan purely to read resource attributes for the policy check - it is never
+# applied, and its state is never persisted anywhere.
+#
+# It still needs to reach Snowflake directly (not TFE) to produce a plan at
+# all. That is a different, already-proven-reachable path - see
+# docs/runbook-bootstrap.md for the SNOWFLAKE_* secrets this job requires per
+# environment, reusing the same SVC_TERRAFORM key material already generated
+# for the TFE workspace variables.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Environment whose config to plan and check (dev, tst or prd)
+        required: true
+        type: string
+      version_label:
+        description: >-
+          Value to feed into TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA for this
+          throwaway plan. Cosmetic only (it only reaches a comment string) -
+          leave empty outside promote.yml.
+        required: false
+        type: string
+        default: ""
+      policy_override:
+        description: Set to "warehouse-size" to acknowledge rule R4. See promote.yml.
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  policy-check:
+    name: Policy check (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      # This plan must never talk to TFE - that is the one thing this runner
+      # cannot rely on. versions.tf declares a `cloud` block for the real,
+      # TFE-driven workspace; stripping it leaves no backend declared at all,
+      # which makes Terraform fall back to a fresh local state. Brace-depth-
+      # aware, not a fixed line range, so it does not depend on the block's
+      # exact formatting.
+      #
+      # Edited in place in the checkout, not a copy elsewhere: the modules
+      # are referenced by ../../modules relative to envs/<env>, and this job
+      # never commits anything, so there is nothing to preserve past the end
+      # of this ephemeral runner. Copying envs/<env> alone to a scratch
+      # directory was tried first and breaks that relative path - exactly the
+      # "Unreadable module directory" failure this repository already hit
+      # once with local modules under CLI-driven runs (see docs/decisions.md).
+      - name: Strip the cloud block
+        working-directory: envs/${{ inputs.environment }}
+        run: |
+          awk '
+            /cloud[[:space:]]*{/ { depth=1; next }
+            depth>0 {
+              if ($0 ~ /{/) depth++
+              if ($0 ~ /}/) depth--
+              next
+            }
+            { print }
+          ' versions.tf > versions.tf.tmp
+          mv versions.tf.tmp versions.tf
+
+      - name: terraform init (local, no TFE)
+        working-directory: envs/${{ inputs.environment }}
+        run: terraform init -input=false
+
+      - name: terraform plan (read-only, never applied)
+        working-directory: envs/${{ inputs.environment }}
+        env:
+          SNOWFLAKE_ORGANIZATION_NAME: ${{ secrets.SNOWFLAKE_ORGANIZATION_NAME }}
+          SNOWFLAKE_ACCOUNT_NAME: ${{ secrets.SNOWFLAKE_ACCOUNT_NAME }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_AUTHENTICATOR: SNOWFLAKE_JWT
+          SNOWFLAKE_ROLE: ACCOUNTADMIN
+          TF_VAR_snowflake_private_key: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          TF_VAR_dbt_service_user_public_key: ${{ vars.DBT_SERVICE_USER_PUBLIC_KEY }}
+          TF_VAR_TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA: ${{ inputs.version_label }}
+        run: |
+          terraform plan -input=false -out=tfplan
+          terraform show -json tfplan > tfplan.json
+
+      - name: Policy check
+        working-directory: envs/${{ inputs.environment }}
+        env:
+          POLICY_OVERRIDE: ${{ inputs.policy_override }}
+        run: "${{ github.workspace }}/.github/scripts/policy_check.sh tfplan.json ${{ inputs.environment }}"
