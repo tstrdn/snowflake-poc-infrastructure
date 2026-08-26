@@ -1,0 +1,196 @@
+name: Promote
+
+# Manual promotion of an already-tagged configuration state to test or
+# production. Also the rollback path: promoting an older tag is the same
+# operation, which is exactly why there is no separate rollback workflow
+# (P6, R2).
+#
+# ---------------------------------------------------------------------------
+# VCS-driven, not CLI/API-driven (see docs/decisions.md).
+#
+# This workflow never runs `terraform apply`, and after this change it never
+# runs `terraform plan` against the real workspace either - it cannot assume
+# this runner can reach Terraform Enterprise at all. Instead, dev/tst/prd are
+# each a VCS-driven TFE workspace watching its own Git branch:
+#
+#   dev      watches `main` directly - merging to main is deploying to dev.
+#   env/tst  watches the env/tst branch
+#   env/prd  watches the env/prd branch
+#
+# "Promoting" a version to tst or prd means moving that environment's branch
+# to point at the exact tree the chosen release tag names - a plain Git
+# operation this runner can always do, since it only ever has to reach
+# GitHub, never TFE. TFE finds out about the change itself, on its own
+# outbound connection to GitHub, the same way it finds out about pushes to
+# main. See docs/decisions.md for why this replaced the CLI-driven
+# `terraform apply` this workflow used to run directly.
+#
+# Each promotion, including a rollback, is one new commit on the target env
+# branch whose entire tree is replaced with the chosen tag's tree - never a
+# force-push. That keeps a rollback exactly as auditable as a forward
+# promotion (same mechanism, older version) without rewriting history on a
+# branch that promotions from any point in time may need to reference later.
+#
+# No approval gate here by deliberate PoC scope decision.
+#
+# The process specification's target state (E17) calls for two-role approval
+# on every promotion to TEST and PROD, and E18 records how that would be
+# implemented - two sequential GitHub Environments per target environment,
+# each with its own reviewer group and self-review disabled. That design is
+# unchanged and still the intended end state; it is simply out of scope for
+# this PoC, which promotes on the "deploy" GitHub Environment alone (whatever
+# reviewer settings that carries, if any) and otherwise runs straight
+# through. Re-adding the two-role chain removed here is the way back to
+# E17/E18 once approver groups are decided (O9).
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - tst
+          - prd
+      version:
+        description: Configuration version to deploy, e.g. 0.2.0 (no leading v)
+        required: true
+        type: string
+      policy_override:
+        description: >-
+          Set to "warehouse-size" to acknowledge a non-PROD warehouse-size
+          policy violation. Leave empty in the normal case. Recorded in this
+          run's inputs either way, so an override is always auditable.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  validate-input:
+    name: Check version and tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject malformed versions
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'${VERSION}' is not a bare semver string. Use 0.2.0, not v0.2.0."
+            exit 1
+          fi
+
+      # A promotion can only ever move a version that was actually released -
+      # this cannot invent a deployment out of an arbitrary string. It does
+      # not check that the version already ran in a lower environment first
+      # (that ordering is not yet enforced anywhere - see the specification's
+      # open design considerations), only that the tag is real.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Confirm the tag exists
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! git rev-parse "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag v${VERSION} does not exist. Nothing was ever released under this version."
+            exit 1
+          fi
+          echo "Tag v${VERSION} confirmed."
+
+  policy-check:
+    name: Policy check
+    needs: validate-input
+    uses: ./.github/workflows/policy-check.yml
+    with:
+      environment: ${{ inputs.environment }}
+      version_label: ${{ inputs.version }}
+      policy_override: ${{ inputs.policy_override }}
+    secrets: inherit
+
+  promote:
+    name: Move env/${{ inputs.environment }}
+    needs: policy-check
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    # Two promotions to the same environment racing would both try to move
+    # the same branch from the same starting point - serialize them.
+    concurrency:
+      group: promote-${{ inputs.environment }}
+      cancel-in-progress: false
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # A token that can bypass the env/* branch ruleset (see
+          # docs/runbook-bootstrap.md) - GITHUB_TOKEN cannot, by design, so
+          # env/tst and env/prd stay unreachable to anything except this job.
+          token: ${{ secrets.GH_PUSH_TOKEN }}
+
+      - name: Move the branch to v${{ inputs.version }}
+        env:
+          VERSION: ${{ inputs.version }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          target="env/${ENVIRONMENT}"
+
+          # Start from wherever the branch already is (or an orphan root, the
+          # first time it is promoted to at all) - never from the tag itself,
+          # so the new commit's parent is the branch's current tip and this
+          # push is always a plain fast-forward. No force-push, forwards or
+          # back (see the header comment on rollback).
+          if git ls-remote --exit-code --heads origin "$target" >/dev/null 2>&1; then
+            git fetch origin "$target"
+            git checkout -B promote-tmp "origin/${target}"
+          else
+            echo "env/${ENVIRONMENT} does not exist yet - creating it with this promotion."
+            git checkout --orphan promote-tmp
+          fi
+
+          # Replace the entire tree with the tag's tree, nothing carried over
+          # from whatever the branch held before.
+          git rm -rf --quiet . >/dev/null 2>&1 || true
+          git checkout "v${VERSION}" -- .
+          git add -A
+          git commit --quiet -m "Promote ${ENVIRONMENT} to v${VERSION}"
+          git push origin "promote-tmp:${target}"
+
+          commit=$(git rev-parse HEAD)
+          echo "COMMIT_SHA=${commit}" >> "$GITHUB_ENV"
+
+      - name: Summarise
+        if: always()
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          {
+            echo "## ${ENVIRONMENT} — configuration v${VERSION}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Environment | \`${ENVIRONMENT}\` |"
+            echo "| Version (tag) | \`v${VERSION}\` |"
+            echo "| Branch moved | \`env/${ENVIRONMENT}\` -> \`${COMMIT_SHA:-unknown}\` |"
+            echo "| TFE workspace | \`snowflake-poc-${ENVIRONMENT}\` |"
+            echo
+            echo "This job only moved the branch - it does not know whether TFE has"
+            echo "planned or applied yet, and cannot poll TFE to find out (see"
+            echo "docs/decisions.md). Check the run directly in the TFE UI, or read"
+            echo "the deployed version back from Snowflake once it is done:"
+            echo "\`SHOW DATABASES LIKE 'OPS'\` on this account shows it in the"
+            echo "comment (E6)."
+          } >> "$GITHUB_STEP_SUMMARY"

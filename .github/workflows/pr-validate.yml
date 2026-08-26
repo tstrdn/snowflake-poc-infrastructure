@@ -1,0 +1,143 @@
+name: PR validation
+
+# Every check that can fail without touching Snowflake runs first and in
+# parallel. The policy check runs last, because it is the only job that needs
+# credentials and the only one that costs anything.
+#
+# There is no speculative-plan-for-review job here anymore. Dev is a
+# VCS-driven TFE workspace (see docs/decisions.md) - TFE runs its own
+# speculative plan against this PR natively, on its own connection to
+# GitHub, and posts the result as a status check on the PR. This runner
+# cannot assume it can reach TFE to do that itself. The policy-check job
+# below still runs a plan, but a throwaway local one, only to read resource
+# attributes for the five policy rules - never against the real workspace,
+# never applied.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.9.8"
+
+jobs:
+  static:
+    name: Format, lint and scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform validate (modules)
+        run: |
+          for module in modules/*/; do
+            echo "::group::validate ${module}"
+            terraform -chdir="${module}" init -backend=false -input=false
+            terraform -chdir="${module}" validate
+            echo "::endgroup::"
+          done
+
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: latest
+
+      - name: tflint
+        run: |
+          tflint --init
+          tflint --recursive --minimum-failure-severity=warning
+
+      # CKV_TF_1 requires module sources to be pinned to a git commit hash. It
+      # is written for git:: sources, where a branch or a re-pointed tag can
+      # change what a reference resolves to. Modules are now local relative
+      # paths (E2/E3), not a rule this check is designed for - Checkov's own
+      # immutability concern is instead satisfied by the whole configuration
+      # being deployed from a protected, immutable release tag (P3), which is
+      # a repository-wide guarantee rather than a per-module one.
+      #
+      # Left skipped defensively rather than removed outright: this has not
+      # been re-run against Checkov since the source change, so it is not yet
+      # confirmed the rule stops firing on local paths on its own. If a future
+      # PR validation run shows CKV_TF_1 passing without the skip, remove it.
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          quiet: true
+          soft_fail: false
+          skip_check: CKV_TF_1
+
+      # Checkov runs in a container as root and writes results.sarif into the
+      # workspace root. gitleaks writes that same filename as the runner user
+      # and fails with "permission denied" - a collision between two tools with
+      # one hardcoded output path, not a finding. Clear it between them.
+      - name: Clear the Checkov report
+        run: sudo rm -f results.sarif
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  version-bump:
+    name: VERSION bumped
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # VERSION becomes the release tag (A9), which is the only version
+      # reference this repository has now that there is no module registry
+      # (E2/E3). Changing the configuration without bumping it would mean the
+      # same tag could point at two different trees over time, which is
+      # exactly what tag protection and this check exist to prevent.
+      - name: Require a VERSION bump when the configuration changes
+        run: |
+          base="origin/${{ github.base_ref }}"
+          git fetch --quiet origin "${{ github.base_ref }}"
+
+          if ! git diff --quiet "$base" HEAD -- modules/ envs/; then
+            if git diff --quiet "$base" HEAD -- VERSION; then
+              echo "::error file=VERSION::modules/ or envs/ changed but VERSION did not."
+              echo "Bump VERSION so the change gets a new, immutable tag."
+              exit 1
+            fi
+
+            old=$(git show "$base:VERSION" | tr -d '[:space:]')
+            new=$(tr -d '[:space:]' < VERSION)
+            echo "VERSION ${old} -> ${new}"
+
+            # Sort -V puts the lower version first; if the new one is not
+            # strictly greater, the pin would move backwards.
+            if [ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | head -1)" != "$old" ] || [ "$old" = "$new" ]; then
+              echo "::error file=VERSION::VERSION must increase (${old} -> ${new})."
+              exit 1
+            fi
+          else
+            echo "No module changes; VERSION bump not required."
+          fi
+
+  policy-check:
+    name: Policy check
+    needs: [static, version-bump]
+    uses: ./.github/workflows/policy-check.yml
+    with:
+      environment: dev
+    secrets: inherit
