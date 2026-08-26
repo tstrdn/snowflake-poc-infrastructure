@@ -95,8 +95,14 @@ else
 fi
 
 # --- Rule 5: minimum retention for databases ---------------------------------
+# Both currently 1: this trial account is on Standard Edition, which caps
+# Time Travel retention at 1 day account-wide - Terraform apply fails outright
+# above that (confirmed against the real prd account), so a higher PROD
+# minimum isn't just unenforced, it's unreachable. Raise MIN_RETENTION_PROD
+# back toward the target-state value once/if the account is on Enterprise
+# Edition or higher - see docs/limitations-and-costs.md.
 MIN_RETENTION_DEFAULT=1
-MIN_RETENTION_PROD=7
+MIN_RETENTION_PROD=1
 min_retention=$([ "$ENVIRONMENT" = "prd" ] && echo "$MIN_RETENTION_PROD" || echo "$MIN_RETENTION_DEFAULT")
 short_retention=$(jq -r --argjson min "$min_retention" '
   [.resource_changes[]?

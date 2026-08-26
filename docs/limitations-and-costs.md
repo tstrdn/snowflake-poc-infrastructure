@@ -103,11 +103,15 @@ applied to another platform, not because they remain unfixed.
 | `Unsupported feature GRANT/REVOKE CREATE MATERIALIZED VIEW ON SCHEMA` | Materialized views are Enterprise Edition; these accounts are Standard | Removed the privilege. Note that Terraform issues all schema privileges as one `GRANT`, so a single unsupported privilege fails the whole statement and masks any others |
 | `Invalid object type 'DBT_PROJECT' for privilege 'MODIFY'` | `MODIFY` is not valid for `DBT PROJECT` | Removed the future grant entirely. It was redundant: `TRANSFORMER` creates the project object and therefore owns it |
 | `error looking up module versions: 401` | `terraform init` installs modules on the runner even in Remote execution mode | Runner now derives `TF_TOKEN_<host>` from `JF_URL` and authenticates to the registry too |
+| `Exceeds maximum allowable retention time (1 day(s))` on every database in `prd` | Standard Edition (what `POC_PROD` runs) caps Time Travel retention at 1 day account-wide; the target-state value of 7 days requires Enterprise Edition or higher and simply cannot be set on this account | `envs/prd/modules.tf`'s `data_retention_days` and `policy_check.sh`'s `MIN_RETENTION_PROD` both lowered to 1, matching what the account can actually accept. Terraform `plan` never catches this - the error only surfaces from Snowflake's own SQL layer during `apply`, so a green plan is not proof this would succeed |
 
 The first two were only reachable by applying against a real account of a
 specific edition. `terraform validate` confirms a configuration is well-formed;
 it cannot know which privileges your edition supports, or which apply to an
-object type as new as `DBT PROJECT`.
+object type as new as `DBT PROJECT`. The retention limit is the same category
+of gap: a plan-time check (R5 in `policy_check.sh`) can only validate the
+*value* against a hardcoded minimum, never against what the specific live
+account's edition permits.
 
 ---
 
