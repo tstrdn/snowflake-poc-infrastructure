@@ -40,3 +40,16 @@ module "rbac" {
   dbt_service_user_public_key = var.dbt_service_user_public_key
   allow_developer_schemas     = false
 }
+
+# docs/guinea-pig.md. Temporary - delete this block and the guinea_pig_*
+# outputs to remove it.
+module "guinea_pig" {
+  source = "../../modules/snowflake-guinea-pig"
+
+  # The alias is the one carrying a session warehouse (versions.tf).
+  providers = {
+    snowflake = snowflake.guinea_pig
+  }
+
+  version_label = var.TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA
+}

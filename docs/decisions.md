@@ -235,3 +235,60 @@ easier one to open after all, or the org standardizes on API-driven runs
 with a purpose-built trigger service positioned to reach TFE directly - in
 either case, CLI/API-driven is a smaller workflow surface than what is here
 now.
+
+---
+
+## 10. The guinea pig is a self-contained module
+
+**Decision.** The change that demonstrates the first go-live is
+`modules/snowflake-guinea-pig`, called from all three `envs/*/modules.tf`. It
+creates its own resource monitor, warehouse, database, schema, table and role,
+borrows nothing from module "environment" or module "rbac", and takes exactly
+one input: the deployed commit.
+
+**Why it is in this repository.** Its whole claim is that *this* delivery path
+works. A separate repository with freshly created workspaces would demonstrate
+that *a* path works, and would touch none of what is actually uncertain:
+`promote.yml`, the branch-per-environment mechanic of decision 9, branch
+protection, the release tag, the existing credentials. A guinea pig that avoids
+the machinery it is meant to test is theatre.
+
+**Why self-contained.** An earlier revision read through ANALYST and
+`WH_REPORTING_XS`, which entangled a throwaway with the platform's real RBAC and
+compute: a mistake in it, or an untidy removal, could reach objects that matter.
+Its own role and its own warehouse mean the blast radius is the guinea pig and
+nothing else, and teardown is one module block per environment. It also restores
+a point the borrowed version had lost - the reader needs `USAGE` on a warehouse,
+the privilege most often forgotten, and the one whose absence Snowflake reports
+as "object does not exist" rather than "not permitted".
+
+**Why one variable and not none.** `version_label` is what makes the guinea pig
+able to fail: without it, three constant rows return identical output in every
+account and a promotion that silently did nothing looks like one that worked. It
+is runtime metadata injected by TFE, not a configuration knob, and a child
+module cannot read a root variable - so it has to be passed. Nothing else is
+parameterised.
+
+**Cost - `snowflake_execute`.** The table is built by a `CREATE TABLE AS
+SELECT`, not by a typed resource, so the guinea pig genuinely writes: storage, a
+running warehouse, the deploying identity. The price is that Terraform tracks the
+*statement*, not the table - drop the table by hand and the next plan reports no
+changes. The `query` argument surfaces that as an empty `guinea_pig_state`
+output, but nothing re-runs on the strength of it: visibility, not convergence.
+This runs against the principle that state is read from the account, and is
+accepted only because the object is a throwaway with no consumers. Three further
+costs - an unvalidated `revert`, a drop-and-recreate window on every promotion,
+and grants that survive only because they are future grants on the schema rather
+than on the object - are in `docs/guinea-pig.md`. The pattern does not scale past
+a guinea pig, and is not a precedent for real objects.
+
+**Cost - a session warehouse.** Every other module here does metadata-only DDL,
+which needs none; writing rows does. `envs/*/versions.tf` gains a
+`snowflake.guinea_pig` provider alias carrying `WH_TRANSFORM_XS` as a literal,
+because `snowflake_execute` forbids `USE WAREHOUSE` inside a statement. It names
+the platform's transform warehouse rather than the guinea pig's own, because
+provider configuration is resolved before any resource exists and naming a
+warehouse this configuration creates would be circular. The default provider is
+untouched, so no other module's session changes. On a brand-new account
+`WH_TRANSFORM_XS` does not exist yet either, so a first bootstrap apply should
+exclude the module.
