@@ -43,3 +43,14 @@ terraform {
 provider "snowflake" {
   private_key = var.snowflake_private_key
 }
+
+# The guinea pig writes rows, which needs a warehouse in the session; the
+# default provider has none, because everything else here is metadata-only DDL.
+# snowflake_execute forbids USE WAREHOUSE inside a statement, so it arrives as
+# an alias. WH_TRANSFORM_XS rather than the guinea pig's own warehouse: provider
+# configuration resolves before any resource exists.
+provider "snowflake" {
+  alias       = "guinea_pig"
+  private_key = var.snowflake_private_key
+  warehouse   = "WH_TRANSFORM_XS"
+}
