@@ -49,8 +49,13 @@ provider "snowflake" {
 # snowflake_execute forbids USE WAREHOUSE inside a statement, so it arrives as
 # an alias. WH_TRANSFORM_XS rather than the guinea pig's own warehouse: provider
 # configuration resolves before any resource exists.
+#
+# role is PLATFORM_AUTOMATION, not the default provider's ACCOUNTADMIN: the
+# guinea pig's least-privilege trial (docs/decisions.md). PLATFORM_AUTOMATION
+# is created in bootstrap.sql and owns everything this module creates.
 provider "snowflake" {
   alias       = "guinea_pig"
+  role        = "PLATFORM_AUTOMATION"
   private_key = var.snowflake_private_key
   warehouse   = "WH_TRANSFORM_XS"
 }

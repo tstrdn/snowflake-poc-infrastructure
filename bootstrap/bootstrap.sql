@@ -42,5 +42,43 @@ CREATE USER IF NOT EXISTS SVC_TERRAFORM
 -- account. Left broad here so the PoC bootstrap is a single reliable step.
 GRANT ROLE ACCOUNTADMIN TO USER SVC_TERRAFORM;
 
+-- PLATFORM_AUTOMATION: the guinea pig's least-privilege trial (docs/decisions.md,
+-- "Least privilege for the guinea pig"). It owns what it creates and can grant on
+-- its own objects without MANAGE GRANTS, but it holds nothing account-wide beyond
+-- CREATE DATABASE / CREATE WAREHOUSE. SVC_TERRAFORM keeps ACCOUNTADMIN as its
+-- default role above; the guinea pig's Terraform provider alias switches to this
+-- role explicitly (envs/*/versions.tf).
+USE ROLE ACCOUNTADMIN;
+
+CREATE ROLE IF NOT EXISTS PLATFORM_AUTOMATION
+  COMMENT = 'Least-privilege trial for automation identities. Currently used by the guinea pig only.';
+
+GRANT ROLE PLATFORM_AUTOMATION TO ROLE SYSADMIN;
+GRANT ROLE PLATFORM_AUTOMATION TO USER SVC_TERRAFORM;
+
+GRANT CREATE DATABASE ON ACCOUNT TO ROLE PLATFORM_AUTOMATION;
+GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE PLATFORM_AUTOMATION;
+
+-- Resource monitor creation is exclusively an ACCOUNTADMIN privilege - it cannot
+-- be delegated even via a custom role grant. So it is created here, once, and
+-- Terraform (modules/snowflake-guinea-pig) only references it by name and manages
+-- its thresholds via ALTER, which MODIFY below permits.
+CREATE RESOURCE MONITOR IF NOT EXISTS RM_GUINEA_PIG
+  WITH
+    CREDIT_QUOTA = 1
+    FREQUENCY = MONTHLY
+    START_TIMESTAMP = IMMEDIATELY
+    TRIGGERS
+      ON 75  PERCENT DO NOTIFY
+      ON 90  PERCENT DO NOTIFY
+      ON 95  PERCENT DO SUSPEND
+      ON 100 PERCENT DO SUSPEND_IMMEDIATE;
+
+GRANT MODIFY ON RESOURCE MONITOR RM_GUINEA_PIG TO ROLE PLATFORM_AUTOMATION;
+
 -- Verify: should return one row with TYPE = SERVICE and a non-null RSA key.
 SHOW USERS LIKE 'SVC_TERRAFORM';
+
+-- Verify: PLATFORM_AUTOMATION should show CREATE DATABASE, CREATE WAREHOUSE, and
+-- (via the resource monitor grant) MODIFY on RM_GUINEA_PIG.
+SHOW GRANTS TO ROLE PLATFORM_AUTOMATION;

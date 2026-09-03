@@ -65,7 +65,7 @@ Everything it needs, and nothing it does not own:
 
 | Object | Name |
 |---|---|
-| Resource monitor | `RM_GUINEA_PIG` (1 credit) |
+| Resource monitor | `RM_GUINEA_PIG` (1 credit) — created by hand in `bootstrap.sql`, not by this module |
 | Warehouse | `WH_GUINEA_PIG_XS` (XSMALL, auto-suspend 60s) |
 | Database | `GUINEA_PIG` |
 | Schema | `GUINEA_PIG.SIGNAL` |
@@ -75,6 +75,14 @@ Everything it needs, and nothing it does not own:
 It borrows nothing from `module.environment` or `module.rbac`, and takes no
 input other than `version_label`. A mistake here, or an untidy removal, cannot
 reach the platform's real RBAC or compute.
+
+Deploys as `PLATFORM_AUTOMATION`, not `ACCOUNTADMIN` — a role created once in
+`bootstrap.sql` holding only `CREATE DATABASE` and `CREATE WAREHOUSE`, no
+`MANAGE GRANTS` (docs/decisions.md, decision 11). It owns everything above and
+grants the reader role from that ownership, not from an account-wide grant
+privilege. The one exception is the resource monitor: `CREATE RESOURCE MONITOR`
+cannot be delegated to any custom role, so `RM_GUINEA_PIG` is the one object
+here that still requires a manual `ACCOUNTADMIN` step.
 
 ## Acceptance criteria
 
@@ -176,9 +184,14 @@ exclude the module and add it back afterwards.
 Delete the `module "guinea_pig"` block and the `guinea_pig_*` outputs from all
 three environments, plus the `snowflake.guinea_pig` provider alias and
 `modules/snowflake-guinea-pig`, then let the change promote normally. Removing
-the module runs `revert`
-(`DROP TABLE IF EXISTS`) and destroys the schema, database, role, warehouse and
-resource monitor. Nothing else references any of them.
+the module runs `revert` (`DROP TABLE IF EXISTS`) and destroys the schema,
+database, role and warehouse. Nothing else references any of them.
+
+`RM_GUINEA_PIG` and the `PLATFORM_AUTOMATION` role live in `bootstrap.sql`, not
+in Terraform state, so they survive the module removal and need a manual
+`DROP RESOURCE MONITOR` / `DROP ROLE` as `ACCOUNTADMIN` per account — unless
+`PLATFORM_AUTOMATION` has been carried forward as the template for narrowing
+`SVC_TERRAFORM` itself, in which case leave it and only drop the monitor.
 
 Agree the teardown date when the guinea pig is agreed. One left running for a
 year becomes something someone eventually believes in.

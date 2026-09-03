@@ -292,3 +292,40 @@ warehouse this configuration creates would be circular. The default provider is
 untouched, so no other module's session changes. On a brand-new account
 `WH_TRANSFORM_XS` does not exist yet either, so a first bootstrap apply should
 exclude the module.
+
+---
+
+## 11. Least privilege for the guinea pig
+
+**Decision.** The `snowflake.guinea_pig` provider alias (`envs/*/versions.tf`)
+runs as `PLATFORM_AUTOMATION`, not as the default provider's `ACCOUNTADMIN`.
+`PLATFORM_AUTOMATION` is created once by hand in `bootstrap.sql`, rolled up to
+`SYSADMIN`, and holds only `CREATE DATABASE` and `CREATE WAREHOUSE` on the
+account - nothing else, and specifically not `MANAGE GRANTS`.
+
+**Why this is enough without `MANAGE GRANTS`.** In a regular (non-managed-access)
+schema, the role that owns an object can grant privileges on it to other roles by
+virtue of `OWNERSHIP` alone - Snowflake's own documentation is explicit on this.
+`PLATFORM_AUTOMATION` owns every object the guinea pig creates, so the reader
+role's grants in `grants.tf`, including the future grant on the schema, need no
+account-wide grant privilege. `MANAGE GRANTS` would let a role grant *any*
+privilege on *any* object account-wide - close to `ACCOUNTADMIN` in practice -
+and the guinea pig needs none of that reach.
+
+**Why the resource monitor still is not delegated.** `CREATE RESOURCE MONITOR`
+is exclusive to `ACCOUNTADMIN` and cannot be granted to any custom role, so
+`RM_GUINEA_PIG` is created once in `bootstrap.sql` instead of in
+`modules/snowflake-guinea-pig`. `PLATFORM_AUTOMATION` receives `MODIFY` on it,
+which is enough for the warehouse resource to reference it and for Terraform to
+manage its thresholds - just not to have created it. This is the one place the
+module still depends on a manual, one-time ACCOUNTADMIN step.
+
+**Why this is scoped to the guinea pig, not the platform.** The default provider
+- everything in `envs/*` except this one alias - keeps running as `SVC_TERRAFORM`
+/ `ACCOUNTADMIN`; narrowing that is explicitly out of scope here (`bootstrap.sql`
+still calls it out as the first thing to do beyond a PoC). The guinea pig is
+disposable and isolated by design (decision 10), which makes it the place to
+trial a narrower role without risking the platform's own modules. If
+`PLATFORM_AUTOMATION` proves out here, the same shape - an owning role scoped to
+what it actually needs, plus a bootstrap-managed resource monitor - is the
+template for narrowing `SVC_TERRAFORM` itself.

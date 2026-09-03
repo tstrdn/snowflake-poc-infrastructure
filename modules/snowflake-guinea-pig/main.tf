@@ -2,19 +2,10 @@
 # live in this account. Self-contained - it borrows nothing from the other
 # modules. Rationale and acceptance criteria: docs/guinea-pig.md.
 
-# A resource monitor is not optional: policy rule R3 requires every warehouse to
-# have one, together with auto_suspend.
-resource "snowflake_resource_monitor" "guinea_pig" {
-  name         = "RM_GUINEA_PIG"
-  credit_quota = 1
-
-  frequency       = "MONTHLY"
-  start_timestamp = "IMMEDIATELY"
-
-  notify_triggers           = [75, 90]
-  suspend_trigger           = 95
-  suspend_immediate_trigger = 100
-}
+# RM_GUINEA_PIG itself is created in bootstrap.sql, by hand, as ACCOUNTADMIN:
+# resource monitor creation cannot be delegated to any custom role, including
+# the one this module's provider alias runs as (docs/decisions.md, "Least
+# privilege for the guinea pig"). Referenced here by name only.
 
 # What the reader queries with. Terraform writes with WH_TRANSFORM_XS instead -
 # see the provider alias in envs/*/versions.tf.
@@ -28,7 +19,7 @@ resource "snowflake_warehouse" "guinea_pig" {
   auto_resume         = "true"
   initially_suspended = true
 
-  resource_monitor                    = snowflake_resource_monitor.guinea_pig.name
+  resource_monitor                    = "RM_GUINEA_PIG"
   statement_timeout_in_seconds        = 300
   statement_queued_timeout_in_seconds = 600
 }
