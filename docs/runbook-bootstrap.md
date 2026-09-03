@@ -60,10 +60,11 @@ This writes to `bootstrap/keys/dev/`, which is git-ignored. Then:
 Terraform in step 5 — you generated its key pair now only because Terraform
 needs the public half as an input.
 
-> **Note on privilege.** `bootstrap.sql` grants `ACCOUNTADMIN` to
-> `SVC_TERRAFORM` so the PoC bootstrap is one reliable step. Narrowing this to
-> `SYSADMIN` + `SECURITYADMIN` plus specific account-level privileges is the
-> first hardening task beyond a proof of concept.
+> **Note on privilege.** `SVC_TERRAFORM` does **not** hold `ACCOUNTADMIN`. The
+> script grants it `PLATFORM_AUTOMATION`, a role with four account-level `CREATE`
+> privileges and `MODIFY` on the two resource monitors, and nothing else
+> (docs/decisions.md, decision 12). The script itself must still be run as
+> `ACCOUNTADMIN`, because creating a resource monitor requires it.
 
 ---
 
@@ -147,7 +148,12 @@ is why the PEM private key is a Terraform variable and the rest are not):
 | `SNOWFLAKE_ACCOUNT_NAME` | no | That environment's account name |
 | `SNOWFLAKE_USER` | no | `SVC_TERRAFORM` |
 | `SNOWFLAKE_AUTHENTICATOR` | no | `SNOWFLAKE_JWT` |
-| `SNOWFLAKE_ROLE` | no | `ACCOUNTADMIN` |
+
+There is deliberately no `SNOWFLAKE_ROLE` here: the role is set in
+`envs/*/versions.tf` so that the identity a run applies under is reviewable in
+version control rather than in a workspace setting. On a workspace that predates
+this, **delete** any `SNOWFLAKE_ROLE` variable — the explicit provider argument
+already wins, so a leftover value only misleads whoever reads it next.
 
 ### Terraform variables
 
@@ -155,7 +161,6 @@ is why the PEM private key is a Terraform variable and the rest are not):
 |---|---|---|
 | `snowflake_private_key` | **yes** | Whole `keys/<env>/SVC_TERRAFORM.p8` file, `BEGIN`/`END` lines and line breaks intact |
 | `dbt_service_user_public_key` | no | `keys/<env>/SVC_DBT.pub.oneline` — one line, no headers |
-| `resource_monitor_notify_users` | no | Optional. e.g. `["PLATFORM_ADMIN"]`, HCL format enabled |
 
 Seven variables in total, or eight with the optional one — no `TF_TOKEN_*`
 variable and no `TF_API_TOKEN` anymore: nothing in CI calls the TFE API at
@@ -290,7 +295,7 @@ tighter than the old `main`-bypass this section used to describe, not looser.
 ```bash
 cd snowflake-poc-infrastructure
 git checkout -b bootstrap-verification
-# make a trivial change, e.g. bump credit_quota in modules/snowflake-environment
+# make a trivial change, e.g. bump data_retention_days in envs/dev/modules.tf
 echo "0.1.1" > VERSION
 git commit -am "chore: verify the pipeline"
 git push -u origin bootstrap-verification

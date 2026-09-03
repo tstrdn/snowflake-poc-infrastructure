@@ -65,7 +65,7 @@ Everything it needs, and nothing it does not own:
 
 | Object | Name |
 |---|---|
-| Resource monitor | `RM_GUINEA_PIG` (1 credit) |
+| Resource monitor | `RM_GUINEA_PIG` (1 credit) — created by hand in `bootstrap.sql`, not by this module |
 | Warehouse | `WH_GUINEA_PIG_XS` (XSMALL, auto-suspend 60s) |
 | Database | `GUINEA_PIG` |
 | Schema | `GUINEA_PIG.SIGNAL` |
@@ -75,6 +75,22 @@ Everything it needs, and nothing it does not own:
 It borrows nothing from `module.environment` or `module.rbac`, and takes no
 input other than `version_label`. A mistake here, or an untidy removal, cannot
 reach the platform's real RBAC or compute.
+
+Deploys as `PLATFORM_AUTOMATION`, not `ACCOUNTADMIN` — a role created once in
+`bootstrap.sql` holding only `CREATE DATABASE`, `CREATE WAREHOUSE` and
+`CREATE ROLE`, no `MANAGE GRANTS` (docs/decisions.md, decision 11). It owns
+everything above and grants the reader role from that ownership, not from an
+account-wide grant privilege. The one exception is the resource monitor:
+`CREATE RESOURCE MONITOR` cannot be delegated to any custom role, so
+`RM_GUINEA_PIG` is the one object here that still requires a manual
+`ACCOUNTADMIN` step.
+
+In an account where the guinea pig already deployed under the old, unrestricted
+role, switching the provider alias alone is not enough — `PLATFORM_AUTOMATION`
+does not retroactively own objects an earlier identity created, and ownership is
+where its `CREATE TABLE` on the schema comes from. That account needs a
+one-time `GRANT OWNERSHIP` transfer as `ACCOUNTADMIN`; see decision 11 for the
+exact statements.
 
 ## Acceptance criteria
 
@@ -141,6 +157,9 @@ it is precisely why a clone-build-verify-swap pattern exists.
 replacement destroys first, `COPY GRANTS` has nothing to copy from. `SELECT`
 survives only because it is a **future grant on the schema**, not a grant on the
 object. Without that, the reader would lose access on every single deployment.
+That future grant is also why `SIGNAL` is a managed access schema: on a standard
+schema, setting one would require the account-wide `MANAGE GRANTS` privilege that
+`PLATFORM_AUTOMATION` deliberately does not hold (decision 11).
 
 **5. No object identity.** `snowflake_execute` exposes no
 `fully_qualified_name`, since the provider cannot know what the statement
@@ -176,9 +195,14 @@ exclude the module and add it back afterwards.
 Delete the `module "guinea_pig"` block and the `guinea_pig_*` outputs from all
 three environments, plus the `snowflake.guinea_pig` provider alias and
 `modules/snowflake-guinea-pig`, then let the change promote normally. Removing
-the module runs `revert`
-(`DROP TABLE IF EXISTS`) and destroys the schema, database, role, warehouse and
-resource monitor. Nothing else references any of them.
+the module runs `revert` (`DROP TABLE IF EXISTS`) and destroys the schema,
+database, role and warehouse. Nothing else references any of them.
+
+`RM_GUINEA_PIG` and the `PLATFORM_AUTOMATION` role live in `bootstrap.sql`, not
+in Terraform state, so they survive the module removal and need a manual
+`DROP RESOURCE MONITOR` / `DROP ROLE` as `ACCOUNTADMIN` per account — unless
+`PLATFORM_AUTOMATION` has been carried forward as the template for narrowing
+`SVC_TERRAFORM` itself, in which case leave it and only drop the monitor.
 
 Agree the teardown date when the guinea pig is agreed. One left running for a
 year becomes something someone eventually believes in.

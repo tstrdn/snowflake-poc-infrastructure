@@ -13,11 +13,9 @@
 module "environment" {
   source = "../../modules/snowflake-environment"
 
-  env                           = "tst"
-  credit_quota                  = 5
-  data_retention_days           = 1
-  resource_monitor_notify_users = var.resource_monitor_notify_users
-  version_label                 = var.TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA
+  env                 = "tst"
+  data_retention_days = 1
+  version_label       = var.TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA
 }
 
 module "rbac" {

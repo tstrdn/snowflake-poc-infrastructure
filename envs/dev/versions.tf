@@ -32,15 +32,22 @@ terraform {
 #   SNOWFLAKE_ACCOUNT_NAME       account name within the organization
 #   SNOWFLAKE_USER               SVC_TERRAFORM
 #   SNOWFLAKE_AUTHENTICATOR      SNOWFLAKE_JWT
-#   SNOWFLAKE_ROLE               ACCOUNTADMIN
 #
 # The private key cannot be one. HCP exports environment variables as shell
 # variables and rejects newlines, so a PEM has to arrive as a Terraform
 # variable and be wired in explicitly below.
 #
+# role is set here rather than via SNOWFLAKE_ROLE so that the identity this
+# configuration applies under is reviewable in version control instead of in a
+# workspace setting. PLATFORM_AUTOMATION is created in bootstrap.sql and holds
+# no account-wide grant privilege (docs/decisions.md, decision 12); an explicit
+# provider argument takes precedence over the environment variable, so the
+# stale SNOWFLAKE_ROLE=ACCOUNTADMIN workspace variable should be deleted.
+#
 # Nothing here is environment-specific, which is the point: the same code
 # targets a different account purely by which workspace it runs in.
 provider "snowflake" {
+  role        = "PLATFORM_AUTOMATION"
   private_key = var.snowflake_private_key
 }
 
@@ -49,8 +56,12 @@ provider "snowflake" {
 # snowflake_execute forbids USE WAREHOUSE inside a statement, so it arrives as
 # an alias. WH_TRANSFORM_XS rather than the guinea pig's own warehouse: provider
 # configuration resolves before any resource exists.
+#
+# Same role as the default provider; this alias differs only in carrying a
+# warehouse.
 provider "snowflake" {
   alias       = "guinea_pig"
+  role        = "PLATFORM_AUTOMATION"
   private_key = var.snowflake_private_key
   warehouse   = "WH_TRANSFORM_XS"
 }
