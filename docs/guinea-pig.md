@@ -77,12 +77,20 @@ input other than `version_label`. A mistake here, or an untidy removal, cannot
 reach the platform's real RBAC or compute.
 
 Deploys as `PLATFORM_AUTOMATION`, not `ACCOUNTADMIN` — a role created once in
-`bootstrap.sql` holding only `CREATE DATABASE` and `CREATE WAREHOUSE`, no
-`MANAGE GRANTS` (docs/decisions.md, decision 11). It owns everything above and
-grants the reader role from that ownership, not from an account-wide grant
-privilege. The one exception is the resource monitor: `CREATE RESOURCE MONITOR`
-cannot be delegated to any custom role, so `RM_GUINEA_PIG` is the one object
-here that still requires a manual `ACCOUNTADMIN` step.
+`bootstrap.sql` holding only `CREATE DATABASE`, `CREATE WAREHOUSE` and
+`CREATE ROLE`, no `MANAGE GRANTS` (docs/decisions.md, decision 11). It owns
+everything above and grants the reader role from that ownership, not from an
+account-wide grant privilege. The one exception is the resource monitor:
+`CREATE RESOURCE MONITOR` cannot be delegated to any custom role, so
+`RM_GUINEA_PIG` is the one object here that still requires a manual
+`ACCOUNTADMIN` step.
+
+In an account where the guinea pig already deployed under the old, unrestricted
+role, switching the provider alias alone is not enough — `PLATFORM_AUTOMATION`
+does not retroactively own objects an earlier identity created, and ownership is
+where its `CREATE TABLE` on the schema comes from. That account needs a
+one-time `GRANT OWNERSHIP` transfer as `ACCOUNTADMIN`; see decision 11 for the
+exact statements.
 
 ## Acceptance criteria
 

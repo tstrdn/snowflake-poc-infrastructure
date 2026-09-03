@@ -300,8 +300,12 @@ exclude the module.
 **Decision.** The `snowflake.guinea_pig` provider alias (`envs/*/versions.tf`)
 runs as `PLATFORM_AUTOMATION`, not as the default provider's `ACCOUNTADMIN`.
 `PLATFORM_AUTOMATION` is created once by hand in `bootstrap.sql`, rolled up to
-`SYSADMIN`, and holds only `CREATE DATABASE` and `CREATE WAREHOUSE` on the
-account - nothing else, and specifically not `MANAGE GRANTS`.
+`SYSADMIN`, and holds only `CREATE DATABASE`, `CREATE WAREHOUSE` and
+`CREATE ROLE` on the account - nothing else, and specifically not
+`MANAGE GRANTS`. `CREATE ROLE` exists only so it can create `GUINEA_PIG_READER`
+itself; granting that role on to `SYSADMIN` afterwards needs no separate
+privilege, since owning a role is enough to grant it - the same rule that
+applies to the objects below.
 
 **Why this is enough without `MANAGE GRANTS`.** In a regular (non-managed-access)
 schema, the role that owns an object can grant privileges on it to other roles by
@@ -329,3 +333,19 @@ trial a narrower role without risking the platform's own modules. If
 `PLATFORM_AUTOMATION` proves out here, the same shape - an owning role scoped to
 what it actually needs, plus a bootstrap-managed resource monitor - is the
 template for narrowing `SVC_TERRAFORM` itself.
+
+**Ownership transfer, once, for an account where the guinea pig already ran
+under `ACCOUNTADMIN`.** Switching the provider alias's role does not retroactively
+change who owns the database, schema and warehouse the earlier identity already
+created - `PLATFORM_AUTOMATION` has no implicit `CREATE TABLE` on a schema it
+does not own. A one-time, hand-run transfer as `ACCOUNTADMIN` is required in
+that account only:
+
+```sql
+GRANT OWNERSHIP ON DATABASE GUINEA_PIG TO ROLE PLATFORM_AUTOMATION COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON SCHEMA GUINEA_PIG.SIGNAL TO ROLE PLATFORM_AUTOMATION COPY CURRENT GRANTS;
+GRANT OWNERSHIP ON WAREHOUSE WH_GUINEA_PIG_XS TO ROLE PLATFORM_AUTOMATION COPY CURRENT GRANTS;
+```
+
+An account where the guinea pig has not deployed yet does not need this:
+`PLATFORM_AUTOMATION` owns everything from the first apply.
