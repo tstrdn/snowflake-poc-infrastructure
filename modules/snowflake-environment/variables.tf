@@ -32,18 +32,6 @@ variable "statement_timeout_seconds" {
   default     = 3600
 }
 
-variable "credit_quota" {
-  description = "Monthly credit quota for the environment's resource monitor."
-  type        = number
-  default     = 10
-}
-
-variable "resource_monitor_notify_users" {
-  description = "Snowflake user identifiers that receive resource monitor notifications. Empty is valid; notifications are simply not sent."
-  type        = list(string)
-  default     = []
-}
-
 variable "data_retention_days" {
   description = "Time Travel retention for databases. Higher in production."
   type        = number

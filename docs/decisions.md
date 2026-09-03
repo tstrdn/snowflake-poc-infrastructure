@@ -81,7 +81,7 @@ would preview something other than what actually gets deployed, which is worse:
 a plan you cannot trust is more dangerous than no plan.
 
 *Environment-level parameters need a version bump to take effect.* Arguments in
-`envs/<env>/modules.tf`, such as `credit_quota`, are only applied when a
+`envs/<env>/modules.tf`, such as `data_retention_days`, are only applied when a
 deployment runs, and deployments are driven by releases. Changing one without
 bumping `VERSION` leaves it committed but unapplied. Adding `envs/**` to the
 release trigger would fix this, at the cost of making "a release" mean two
@@ -161,9 +161,9 @@ outside code review.
 **Cost.** `SVC_DBT`'s public key passes through an HCP variable. It is a public
 key, so this is not a secrecy problem, but it is a manual wiring step.
 
-**Known weakness.** `bootstrap.sql` grants `ACCOUNTADMIN` to `SVC_TERRAFORM`.
-Narrowing that to `SYSADMIN` + `SECURITYADMIN` plus specific account-level
-privileges is the first hardening task beyond a proof of concept.
+**No longer a weakness.** `bootstrap.sql` used to grant `ACCOUNTADMIN` to
+`SVC_TERRAFORM`. It now grants `PLATFORM_AUTOMATION`, a role holding four
+account-level `CREATE` privileges and nothing else - decision 12.
 
 ---
 
@@ -335,15 +335,10 @@ which is enough for the warehouse resource to reference it and for Terraform to
 manage its thresholds - just not to have created it. This is the one place the
 module still depends on a manual, one-time ACCOUNTADMIN step.
 
-**Why this is scoped to the guinea pig, not the platform.** The default provider
-- everything in `envs/*` except this one alias - keeps running as `SVC_TERRAFORM`
-/ `ACCOUNTADMIN`; narrowing that is explicitly out of scope here (`bootstrap.sql`
-still calls it out as the first thing to do beyond a PoC). The guinea pig is
-disposable and isolated by design (decision 10), which makes it the place to
-trial a narrower role without risking the platform's own modules. If
-`PLATFORM_AUTOMATION` proves out here, the same shape - an owning role scoped to
-what it actually needs, plus a bootstrap-managed resource monitor - is the
-template for narrowing `SVC_TERRAFORM` itself.
+**Why this started with the guinea pig, not the platform.** The guinea pig is
+disposable and isolated by design (decision 10), which made it the place to trial
+a narrower role without risking the platform's own modules. It worked, and
+decision 12 extends the same shape to everything else.
 
 **Ownership transfer, once, for an account where the guinea pig already ran
 under `ACCOUNTADMIN`.** Switching the provider alias's role does not retroactively
@@ -360,3 +355,68 @@ GRANT OWNERSHIP ON WAREHOUSE WH_GUINEA_PIG_XS TO ROLE PLATFORM_AUTOMATION COPY C
 
 An account where the guinea pig has not deployed yet does not need this:
 `PLATFORM_AUTOMATION` owns everything from the first apply.
+
+---
+
+## 12. `SVC_TERRAFORM` no longer holds `ACCOUNTADMIN`
+
+**Decision.** `GRANT ROLE ACCOUNTADMIN TO USER SVC_TERRAFORM` is gone from
+`bootstrap.sql`. `PLATFORM_AUTOMATION` is now the identity's only role and the
+default provider's `role` in all three `envs/*/versions.tf`. It holds exactly
+four account-level privileges - `CREATE DATABASE`, `CREATE WAREHOUSE`,
+`CREATE ROLE`, `CREATE USER` - and `MODIFY` on the two resource monitors.
+Everything else it does, it does by owning the objects it created.
+
+**Why now.** Decision 11 narrowed the guinea pig alone and left the platform on
+`ACCOUNTADMIN`, which meant the security gain was mostly presentational: the key
+could still assume `ACCOUNTADMIN` at will, so the identity was still a full-access
+credential and only its default session role had changed. That is protection
+against accident, not against a stolen key. The trial having worked, there was no
+argument left for keeping the grant.
+
+**The privilege inventory.** Every resource in `environment`, `rbac` and
+`guinea-pig` was checked against what Snowflake requires:
+
+| Resource | Requirement |
+|---|---|
+| 4 databases | `CREATE DATABASE ON ACCOUNT` |
+| 3 warehouses | `CREATE WAREHOUSE ON ACCOUNT` |
+| ~10 access and functional roles | `CREATE ROLE ON ACCOUNT` |
+| `SVC_DBT` | `CREATE USER ON ACCOUNT` |
+| 5 schemas | ownership of the parent database |
+| role hierarchy (`GRANT ROLE ... TO ROLE`) | ownership of the granted role |
+| ordinary object grants | ownership of the object |
+| future grants | managed access schema, see below |
+| `RM_ENV`, `RM_GUINEA_PIG` | `ACCOUNTADMIN` - not delegable |
+
+**Cost - future grants force managed access schemas.** `RAW.JAFFLE_RAW`,
+`ANALYTICS.JAFFLE_STG` and `ANALYTICS.JAFFLE_MARTS` are now created
+`WITH MANAGED ACCESS`, for the reason set out in decision 11: on a standard
+schema a future grant needs the account-wide `MANAGE GRANTS` privilege, on a
+managed access schema the schema owner may set it. The behavioural change is
+real and worth stating plainly - inside those schemas a role that creates a table
+no longer controls access to it, so dbt models built by `TRANSFORMER` are governed
+by the `rbac` grants alone. That is what `rbac` already assumed; managed access
+enforces it. `OPS.DBT_PROJECTS` stays a standard schema, because it carries no
+future grants and `TRANSFORMER` is meant to own the `DBT PROJECT` object outright.
+
+**Cost - `RM_ENV`'s credit quota leaves Terraform.** Resource monitor creation
+cannot be delegated, so `RM_ENV` follows `RM_GUINEA_PIG` into `bootstrap.sql` and
+its quota is set per account by hand (dev 6, tst 5, prd 10) instead of by a
+Terraform variable. `credit_quota` and `resource_monitor_notify_users` are
+removed from the module and from all three root configurations. Policy rule R3 is
+unaffected: it checks that each planned warehouse names a resource monitor, and a
+literal satisfies that more reliably than a reference, which is unknown at plan
+time on a first apply.
+
+**What is deliberately not granted.** `MANAGE GRANTS` - it would let the role
+grant any privilege on any object account-wide, which is `ACCOUNTADMIN` in all
+but name and would undo the point of this decision. Managed access schemas exist
+precisely so that it is not needed.
+
+**Rollout.** The new grants must exist in an account before a run using them.
+Existing accounts also need a one-time ownership transfer for objects created
+under the old identity, on the pattern given in decision 11 - ownership does not
+move retroactively when the provider's role changes. `SNOWFLAKE_ROLE` should be
+deleted from the HCP workspaces; the explicit provider argument already takes
+precedence, so a stale value is misleading rather than harmful.

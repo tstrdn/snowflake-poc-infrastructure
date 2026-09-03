@@ -13,16 +13,14 @@
 module "environment" {
   source = "../../modules/snowflake-environment"
 
-  env          = "prd"
-  credit_quota = 10
+  env = "prd"
   # Standard Edition (what this trial account runs) caps Time Travel
   # retention at 1 day, full stop - Enterprise Edition or higher is required
   # for anything longer. 7 was the target-state value and failed apply here
   # with "Exceeds maximum allowable retention time (1 day(s))"; see
   # docs/limitations-and-costs.md. Revisit if this account is ever upgraded.
-  data_retention_days           = 1
-  resource_monitor_notify_users = var.resource_monitor_notify_users
-  version_label                 = var.TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA
+  data_retention_days = 1
+  version_label       = var.TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA
 }
 
 module "rbac" {

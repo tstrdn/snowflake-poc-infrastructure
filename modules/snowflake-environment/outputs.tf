@@ -34,8 +34,8 @@ output "warehouse_reporting" {
 }
 
 output "resource_monitor" {
-  description = "Resource monitor guarding both warehouses."
-  value       = snowflake_resource_monitor.env.name
+  description = "Resource monitor guarding both warehouses. Created in bootstrap.sql, not by this module."
+  value       = "RM_ENV"
 }
 
 output "deployed_version" {

@@ -20,12 +20,6 @@ variable "dbt_service_user_public_key" {
   type        = string
 }
 
-variable "resource_monitor_notify_users" {
-  description = "Snowflake users to notify when the credit quota approaches its limit."
-  type        = list(string)
-  default     = []
-}
-
 variable "TFC_CONFIGURATION_VERSION_GIT_COMMIT_SHA" {
   description = <<-EOT
     Auto-injected by TFE on every VCS-driven run, if a variable with this
