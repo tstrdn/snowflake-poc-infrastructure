@@ -32,10 +32,15 @@ resource "snowflake_database" "guinea_pig" {
   data_retention_time_in_days = 1
 }
 
+# Managed access is what makes the future grant in grants.tf possible without
+# MANAGE GRANTS: in a standard schema only a role holding that global privilege
+# may grant on future objects, but in a managed access schema the schema owner
+# may (docs/decisions.md, decision 11).
 resource "snowflake_schema" "signal" {
-  database = snowflake_database.guinea_pig.name
-  name     = "SIGNAL"
-  comment  = "Guinea pig - the deployment signal table"
+  database            = snowflake_database.guinea_pig.name
+  name                = "SIGNAL"
+  comment             = "Guinea pig - the deployment signal table"
+  with_managed_access = "true"
 }
 
 resource "snowflake_account_role" "reader" {

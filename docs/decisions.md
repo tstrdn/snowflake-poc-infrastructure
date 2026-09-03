@@ -307,14 +307,25 @@ itself; granting that role on to `SYSADMIN` afterwards needs no separate
 privilege, since owning a role is enough to grant it - the same rule that
 applies to the objects below.
 
-**Why this is enough without `MANAGE GRANTS`.** In a regular (non-managed-access)
-schema, the role that owns an object can grant privileges on it to other roles by
-virtue of `OWNERSHIP` alone - Snowflake's own documentation is explicit on this.
-`PLATFORM_AUTOMATION` owns every object the guinea pig creates, so the reader
-role's grants in `grants.tf`, including the future grant on the schema, need no
+**Why this is enough without `MANAGE GRANTS`.** The role that owns an object can
+grant privileges on it to other roles by virtue of `OWNERSHIP` alone - Snowflake's
+own documentation is explicit on this. `PLATFORM_AUTOMATION` owns every object the
+guinea pig creates, so the reader role's ordinary grants in `grants.tf` need no
 account-wide grant privilege. `MANAGE GRANTS` would let a role grant *any*
 privilege on *any* object account-wide - close to `ACCOUNTADMIN` in practice -
 and the guinea pig needs none of that reach.
+
+**Why `SIGNAL` is a managed access schema.** Future grants are the exception to
+the rule above, and in the opposite direction to what intuition suggests. On a
+standard schema, `GRANT ... ON FUTURE` requires the global `MANAGE GRANTS`
+privilege - ownership is not enough, because a future grant pre-empts the grant
+decisions of whoever will own those objects later. On a *managed access* schema,
+where the schema owner is the designated grant authority for everything inside
+it, the schema owner may set future grants directly. So `SIGNAL` is created
+`WITH MANAGED ACCESS`, and `PLATFORM_AUTOMATION`, which owns it, can maintain the
+future grant on tables without holding anything account-wide. Managed access is
+the accurate description of the arrangement here anyway: one role owns the schema
+and decides all access to it.
 
 **Why the resource monitor still is not delegated.** `CREATE RESOURCE MONITOR`
 is exclusive to `ACCOUNTADMIN` and cannot be granted to any custom role, so

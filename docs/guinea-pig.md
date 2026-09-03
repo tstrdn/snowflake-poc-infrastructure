@@ -157,6 +157,9 @@ it is precisely why a clone-build-verify-swap pattern exists.
 replacement destroys first, `COPY GRANTS` has nothing to copy from. `SELECT`
 survives only because it is a **future grant on the schema**, not a grant on the
 object. Without that, the reader would lose access on every single deployment.
+That future grant is also why `SIGNAL` is a managed access schema: on a standard
+schema, setting one would require the account-wide `MANAGE GRANTS` privilege that
+`PLATFORM_AUTOMATION` deliberately does not hold (decision 11).
 
 **5. No object identity.** `snowflake_execute` exposes no
 `fully_qualified_name`, since the provider cannot know what the statement
